@@ -295,10 +295,14 @@ async function applyAction(db, session, act) {
     }
 
     case "delete_user":
-      await db
-        .prepare("UPDATE users SET is_active = 0, updated_at = ? WHERE id = ? AND pharmacy_id = ? AND role != 'owner'")
-        .bind(now, str(p.id), ph)
-        .run();
+      // التعطيل يجب أن يُبطل الجلسات القائمة فوراً، وإلا بقي توكن الموظف
+      // المسحوبة صلاحيته صالحاً حتى انتهائه (٧ أيام).
+      await db.batch([
+        db.prepare("UPDATE users SET is_active = 0, updated_at = ? WHERE id = ? AND pharmacy_id = ? AND role != 'owner'")
+          .bind(now, str(p.id), ph),
+        db.prepare("DELETE FROM sessions WHERE user_id = ? AND pharmacy_id = ?")
+          .bind(str(p.id), ph),
+      ]);
       return { id: act.id, ok: true };
 
     case "audit":

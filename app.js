@@ -52,13 +52,20 @@ const uuid = () =>
   crypto.randomUUID ? crypto.randomUUID()
     : 'id-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
 
+/** يحوّل الأرقام العربية-الهندية والفارسية إلى لاتينية.
+ *  لازم قبل أي Number(): ‏Number('٤٠') تساوي NaN. */
+function toLatinDigits(input) {
+  return String(input ?? '')
+    .replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d))
+    .replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d));
+}
+
 /** المال: أعداد صحيحة بالأغورة. ١ شيكل = ١٠٠ أغورة. */
 const Money = {
   toAgorot(input) {
-    let s = String(input ?? '').trim();
+    let s = toLatinDigits(input).trim();
     if (!s) return 0;
-    s = s.replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d))
-         .replace(/[٫,]/g, '.').replace(/[^\d.]/g, '');
+    s = s.replace(/[٫,]/g, '.').replace(/[^\d.]/g, '');
     const n = Number(s);
     if (!Number.isFinite(n) || n < 0) return 0;
     return Math.round(n * 100);
@@ -255,48 +262,110 @@ function updateDots() {
     if (d) d.classList.toggle('active', pinBuffer.length >= i);
   }
 }
+let autoTryTimer = null;
+
 function addPin(n) {
   if (pinBuffer.length >= 6) return;
   pinBuffer += n;
   updateDots();
-  if (pinBuffer.length === 4) attemptLogin({ soft: true });
+  // لا إرسال تلقائي للسيرفر. الرقم من ٤ إلى ٦ خانات، وإرساله عند الخانة
+  // الرابعة كان يفشل لصاحب الـ ٦ ويحرق محاولة من عدّاد القفل في كل مرة.
+  clearTimeout(autoTryTimer);
+  if (pinBuffer.length >= 4) autoTryTimer = setTimeout(tryLocalUnlock, 250);
 }
-function clearPin() { pinBuffer = ''; updateDots(); }
+function clearPin() { pinBuffer = ''; clearTimeout(autoTryTimer); updateDots(); }
 
-async function attemptLogin({ soft = false } = {}) {
+/* ---------- المستخدمون المحفوظون على هذا الجهاز ----------
+ * خريطة بمفتاح user_id، لا سجل واحد. جهاز مشترك بين المالك والكاشير
+ * يحتفظ بمُثبِّت كليهما، فلا يُلغي أحدهما قدرة الآخر على الدخول أوفلاين.
+ */
+
+async function getLocalUsers(pharmacyId) {
+  const map = await meta.get('local_users_' + pharmacyId);
+  if (map) return map;
+  // ترحيل من الصيغة القديمة (مستخدم واحد لكل صيدلية)
+  const legacy = await meta.get('local_user_' + pharmacyId);
+  if (legacy && legacy.verifier) {
+    const m = { [legacy.id]: { ...legacy, len: null, at: Date.now() } };
+    await meta.set('local_users_' + pharmacyId, m);
+    await meta.set('local_user_' + pharmacyId, null);
+    return m;
+  }
+  return {};
+}
+
+async function putLocalUser(pharmacyId, rec) {
+  const m = await getLocalUsers(pharmacyId);
+  m[rec.id] = rec;
+  await meta.set('local_users_' + pharmacyId, m);
+}
+
+/** يبحث عن مستخدم محلي يطابق الرقم.
+ *  byLength: اختبر أصحاب هذا الطول فقط — يجعل الفتح التلقائي اشتقاقاً واحداً
+ *  بدل اشتقاق لكل موظف، فلا تتباطأ الشاشة على جهاز لوحي ضعيف. */
+async function matchLocalUser(pharmacyId, pin, byLength = false) {
+  const m = await getLocalUsers(pharmacyId);
+  const cands = Object.values(m).filter(
+    (u) => !byLength || u.len == null || u.len === pin.length);
+  if (!cands.length) return null;
+  const derived = await Promise.all(cands.map((u) => derive(pin, u.salt)));
+  for (let i = 0; i < cands.length; i++) {
+    if (derived[i] === cands[i].verifier) return cands[i];
+  }
+  return null;
+}
+
+const tokenKey = (pharmacyId, userId) => `token_${pharmacyId}_${userId}`;
+
+/** فتح محلي صامت: بلا طلب شبكة وبلا عدّاد محاولات.
+ *  يُبقي الدخول فورياً لصاحب الرقم القصير دون معاقبة صاحب الرقم الأطول. */
+async function tryLocalUnlock() {
+  if (State.user) return;
+  const pharmacyId = lockMode
+    ? State.pharmacyId
+    : $('pharmacy-id-input').value.trim().toUpperCase();
+  if (!pharmacyId) return;
+  const u = await matchLocalUser(pharmacyId, pinBuffer, true);
+  if (!u) return;                        // لا مطابقة: قد يكون الرقم أطول — لا تفعل شيئاً
+  if (lockMode && State.user && u.id !== State.user.id) return;
+  await finishLocalLogin(pharmacyId, u);
+}
+
+async function finishLocalLogin(pharmacyId, local) {
+  const tok = await meta.get(tokenKey(pharmacyId, local.id));
+  if (tok && tok.expires > Date.now()) {
+    State.token = tok.token;
+    State.tokenExpires = tok.expires;
+    State.readOnly = false;
+  } else {
+    // التوكن منتهٍ: قراءة فقط بدل منع الصيدلية من مخزونها
+    State.token = null;
+    State.readOnly = true;
+  }
+  State.pharmacyId = pharmacyId;
+  State.user = { id: local.id, name: local.name, role: local.role };
+  await afterLogin();
+}
+
+async function attemptLogin() {
   const idInput = $('pharmacy-id-input');
   const pharmacyId = lockMode ? State.pharmacyId : idInput.value.trim().toUpperCase();
   const pin = pinBuffer;
 
-  if (!pharmacyId) { if (!soft) toast('أدخل رمز الصيدلية', 'error'); return; }
-  if (pin.length < 4) { if (!soft) toast('الرقم السري ٤ خانات على الأقل', 'error'); return; }
+  if (!pharmacyId) { toast('أدخل رمز الصيدلية', 'error'); return; }
+  if (pin.length < 4) { toast('الرقم السري ٤ خانات على الأقل', 'error'); return; }
 
   const btn = $('login-btn');
   btn.disabled = true;
 
   try {
     // (أ) محاولة محلية — تعمل بلا إنترنت، وتتحقق من مُثبِّت مشتق لا من رقم مخزّن
-    const local = await meta.get('local_user_' + pharmacyId);
-    if (local) {
-      const v = await derive(pin, local.salt);
-      if (v === local.verifier) {
-        const tok = await meta.get('token_' + pharmacyId);
-        if (tok && tok.expires > Date.now()) {
-          State.token = tok.token;
-          State.tokenExpires = tok.expires;
-          State.readOnly = false;
-        } else {
-          // التوكن منتهٍ: نسمح بالعمل للقراءة فقط بدل منع الصيدلية من مخزونها
-          State.token = null;
-          State.readOnly = true;
-        }
-        State.pharmacyId = pharmacyId;
-        State.user = { id: local.id, name: local.name, role: local.role };
-        await afterLogin();
-        return;
-      }
+    const localMap = await getLocalUsers(pharmacyId);
+    if (Object.keys(localMap).length) {
+      const u = await matchLocalUser(pharmacyId, pin, false);   // اختبر الجميع
+      if (u) { await finishLocalLogin(pharmacyId, u); return; }
       if (!navigator.onLine) {
-        if (!soft) toast('الرقم السري غير صحيح', 'error');
+        toast('الرقم السري غير صحيح', 'error');
         clearPin();
         btn.disabled = false;
         return;
@@ -304,7 +373,7 @@ async function attemptLogin({ soft = false } = {}) {
     }
 
     if (!navigator.onLine) {
-      if (!soft) toast('أول دخول على هذا الجهاز يحتاج اتصالاً بالإنترنت', 'error');
+      toast('أول دخول على هذا الجهاز يحتاج اتصالاً بالإنترنت', 'error');
       clearPin();
       btn.disabled = false;
       return;
@@ -322,13 +391,15 @@ async function attemptLogin({ soft = false } = {}) {
     State.user = data.user;
     State.readOnly = false;
 
-    // نخزّن مُثبِّتاً مشتقاً — لا الرقم السري
+    // نخزّن مُثبِّتاً مشتقاً — لا الرقم السري. والتوكن بمفتاح المستخدم،
+    // وإلا لاستخدم موظفٌ توكن زميله فنُسبت فواتيره لغيره على السيرفر.
     const salt = b64(crypto.getRandomValues(new Uint8Array(16)));
-    await meta.set('local_user_' + pharmacyId, {
+    await putLocalUser(pharmacyId, {
       id: data.user.id, name: data.user.name, role: data.user.role,
-      salt, verifier: await derive(pin, salt),
+      salt, verifier: await derive(pin, salt), len: pin.length, at: Date.now(),
     });
-    await meta.set('token_' + pharmacyId, { token: data.token, expires: data.expires_at });
+    await meta.set(tokenKey(pharmacyId, data.user.id),
+      { token: data.token, expires: data.expires_at });
 
     if (data.settings) {
       await db.settings.put({ ...data.settings, pharmacy_id: pharmacyId });
@@ -340,7 +411,7 @@ async function attemptLogin({ soft = false } = {}) {
     } else if (e.message === 'SUBSCRIPTION_SUSPENDED') {
       toast('اشتراك الصيدلية موقوف. تواصل مع مزوّد الخدمة.', 'error');
     } else if (e.message === 'INVALID_CREDENTIALS') {
-      if (!soft) toast('رمز الصيدلية أو الرقم السري غير صحيح', 'error');
+      toast('رمز الصيدلية أو الرقم السري غير صحيح', 'error');
     } else {
       toast('تعذّر الاتصال بالسيرفر', 'error');
     }
@@ -372,17 +443,17 @@ async function afterLogin() {
   checkBackupReminder();
 }
 
-async function logout(full = true) {
-  if (full && State.token && navigator.onLine) {
-    try { await api('/api/logout', { method: 'POST' }); } catch { /* تجاهل */ }
-  }
+/** «خروج» ينهي الجلسة على هذا الجهاز فقط، ولا يُبطل التوكن ولا يحذفه.
+ *  لو حذفناه لاحتاج الموظف إنترنتاً في بداية كل وردية قبل أن يبيع،
+ *  وهذا ينقض الوعد الأساسي بالعمل بلا شبكة. الحاجز هو الرقم السري.
+ *  سحب صلاحية موظف يتم من الإعدادات، ويُبطل جلساته على السيرفر فوراً. */
+async function logout() {
+  await audit('logout', 'session', State.user ? State.user.id : '', '');
   stopSyncLoop();
-  audit('logout', 'session', State.user ? State.user.id : '', '');
   State.user = null;
   State.token = null;
   State.cart = [];          // لا تُورَّث السلة للكاشير التالي
   State.readOnly = false;
-  if (full) await meta.set('token_' + State.pharmacyId, null);
   lockMode = false;
   $('app-view').classList.add('hidden');
   $('login-view').classList.remove('hidden');
@@ -1259,6 +1330,239 @@ async function adjustQty(batchId) {
   syncNow();
 }
 
+/* ==================== ١٤ب. الاستيراد من إكسل ==================== */
+
+// أسماء الأعمدة المقبولة. المطابقة تتجاهل المسافات و«ال» التعريف،
+// فلا يفشل الاستيراد بسبب اختلاف بسيط في صياغة العنوان.
+const COLUMN_MAP = {
+  name:    ['اسمالدواء', 'اسمالصنف', 'الاسم', 'اسم', 'الدواء', 'الصنف', 'name', 'product'],
+  category:['الفئة', 'فئة', 'التصنيف', 'تصنيف', 'category'],
+  barcode: ['الباركود', 'باركود', 'الرمز', 'barcode', 'code'],
+  batch:   ['رقمالدفعة', 'الدفعة', 'دفعة', 'batch', 'lot'],
+  expiry:  ['الصلاحية', 'تاريخالصلاحية', 'الانتهاء', 'expiry', 'exp'],
+  qty:     ['الكمية', 'كمية', 'العدد', 'qty', 'quantity'],
+  cost:    ['سعرالتكلفة', 'التكلفة', 'سعرالشراء', 'cost'],
+  price:   ['سعرالبيع', 'البيع', 'السعر', 'price'],
+};
+
+const normHeader = (s) =>
+  String(s ?? '').trim().toLowerCase()
+    .replace(/[\s_\-.]/g, '')
+    .replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي')
+    .replace(/^ال/, '');
+
+function mapColumns(headerRow) {
+  const found = {};
+  headerRow.forEach((h, idx) => {
+    const n = normHeader(h);
+    for (const [key, names] of Object.entries(COLUMN_MAP)) {
+      if (found[key] !== undefined) continue;
+      if (names.some((v) => normHeader(v) === n)) { found[key] = idx; break; }
+    }
+  });
+  return found;
+}
+
+/** يقبل تاريخ إكسل، و"2027-05"، و"05/2027"، و"5-2027". يعيد نهاية الشهر. */
+function parseExpiry(v) {
+  if (v == null || v === '') return 0;
+  if (v instanceof Date && !isNaN(v)) return monthEnd(`${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}`);
+  const s = toLatinDigits(v).trim();
+  let m = s.match(/^(\d{4})[-/](\d{1,2})$/);            // 2027-05
+  if (m) return monthEnd(`${m[1]}-${String(m[2]).padStart(2, '0')}`);
+  m = s.match(/^(\d{1,2})[-/](\d{4})$/);                 // 05/2027
+  if (m) return monthEnd(`${m[2]}-${String(m[1]).padStart(2, '0')}`);
+  m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);    // 2027-05-31
+  if (m) return monthEnd(`${m[1]}-${String(m[2]).padStart(2, '0')}`);
+  m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);    // 31/05/2027
+  if (m) return monthEnd(`${m[3]}-${String(m[2]).padStart(2, '0')}`);
+  return 0;
+}
+
+async function loadXlsx() {
+  if (typeof XLSX !== 'undefined') return true;
+  return loadScript('vendor/xlsx.min.js');
+}
+
+async function downloadTemplate() {
+  if (!(await loadXlsx())) { toast('تعذّر تحميل مكتبة إكسل', 'error'); return; }
+  const rows = [
+    ['اسم الدواء', 'الفئة', 'الباركود', 'رقم الدفعة', 'الصلاحية', 'الكمية', 'سعر التكلفة', 'سعر البيع'],
+    ['باراسيتامول 500مغ', 'مسكنات', '6281000123456', 'B-1001', '2027-08', 120, 3.50, 5.00],
+    ['أموكسيسيلين 250مغ', 'مضادات حيوية', '6281000987654', 'B-2044', '2026-12', 60, 8.25, 12.00],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [{ wch: 24 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 11 }, { wch: 9 }, { wch: 12 }, { wch: 11 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'الأصناف');
+  XLSX.writeFile(wb, 'نموذج-استيراد-الأصناف.xlsx');
+  toast('نُزّل النموذج — املأه ثم ارفعه');
+}
+
+async function handleExcelFile(evt) {
+  const file = evt.target.files[0];
+  evt.target.value = '';
+  if (!file) return;
+  if (State.readOnly) { toast('وضع القراءة فقط', 'error'); return; }
+  if (!(await loadXlsx())) { toast('تعذّر تحميل مكتبة إكسل', 'error'); return; }
+
+  let rows;
+  try {
+    const wb = XLSX.read(await file.arrayBuffer(), { cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    rows = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, defval: '' });
+  } catch {
+    toast('تعذّر قراءة الملف — تأكد أنه إكسل صالح', 'error');
+    return;
+  }
+  if (!rows.length) { toast('الملف فارغ', 'error'); return; }
+
+  const cols = mapColumns(rows[0]);
+  if (cols.name === undefined) {
+    toast('لم أجد عمود «اسم الدواء» — استخدم النموذج', 'error');
+    return;
+  }
+
+  const cell = (r, key) => (cols[key] === undefined ? '' : r[cols[key]]);
+  const ok = [], bad = [], warn = [];
+  const seenBarcodes = new Set();
+
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    const lineNo = i + 1;                       // رقم السطر كما يراه في إكسل
+    const name = String(cell(r, 'name') ?? '').trim();
+    if (!name) continue;                        // سطر فارغ — تجاهل بصمت
+
+    const qtyRaw = toLatinDigits(cell(r, 'qty')).trim();
+    const qty = qtyRaw === '' ? 0 : Number(qtyRaw);
+    const expiry = parseExpiry(cell(r, 'expiry'));
+    const barcode = String(cell(r, 'barcode') ?? '').trim();
+    const price = Money.toAgorot(cell(r, 'price'));
+    const cost = Money.toAgorot(cell(r, 'cost'));
+
+    if (!Number.isInteger(qty) || qty < 0) { bad.push(`سطر ${lineNo}: الكمية «${qtyRaw}» ليست عدداً صحيحاً`); continue; }
+    if (!expiry) { bad.push(`سطر ${lineNo}: تاريخ صلاحية غير مفهوم «${cell(r, 'expiry')}»`); continue; }
+    if (barcode && seenBarcodes.has(barcode)) warn.push(`سطر ${lineNo}: باركود مكرر داخل الملف`);
+    if (barcode) seenBarcodes.add(barcode);
+    if (price <= 0) warn.push(`سطر ${lineNo}: سعر البيع صفر`);
+    if (expiry < Date.now()) warn.push(`سطر ${lineNo}: الصلاحية منتهية — لن يُسمح ببيعها`);
+
+    ok.push({
+      name, barcode,
+      category: String(cell(r, 'category') ?? '').trim(),
+      batch: String(cell(r, 'batch') ?? '').trim() || '—',
+      expiry, qty, price, cost,
+    });
+  }
+
+  if (!ok.length) {
+    await importReport({ ok: [], bad, warn, confirmable: false });
+    return;
+  }
+  const go = await importReport({ ok, bad, warn, confirmable: true });
+  if (go) await commitImport(ok);
+}
+
+/** ملخص قبل الحفظ. لا يُكتب شيء في المخزون قبل موافقة صريحة. */
+function importReport({ ok, bad, warn, confirmable }) {
+  return new Promise((resolve) => {
+    const dlg = el('dialog', { style: 'width:min(94vw,560px)' });
+    const list = (title, items, cls) =>
+      items.length
+        ? el('div', { style: 'margin-block-start:12px' },
+            el('div', { style: `font-weight:700;font-size:13.5px;margin-block-end:6px;color:var(--${cls})`,
+                        text: `${title} (${items.length})` }),
+            el('div', { style: 'max-height:150px;overflow:auto;font-size:12.5px;line-height:1.9;color:var(--muted)' },
+              ...items.slice(0, 40).map((t) => el('div', { text: '• ' + t })),
+              items.length > 40 ? el('div', { text: `… و${items.length - 40} أخرى` }) : null))
+        : null;
+
+    dlg.append(
+      el('h3', { text: 'مراجعة الاستيراد' }),
+      el('p', { text: ok.length
+        ? `${ok.length} صنفاً جاهزاً للإضافة.`
+        : 'لا يوجد أي سطر صالح للاستيراد.' }),
+      list('أسطر مرفوضة — لن تُستورد', bad, 'danger'),
+      list('تنبيهات — ستُستورد رغم ذلك', warn, 'warning'),
+      el('div', { class: 'dialog-actions' },
+        el('button', { class: 'btn-ghost', text: confirmable ? 'إلغاء' : 'إغلاق',
+                       onclick: () => dlg.close('cancel') }),
+        confirmable
+          ? el('button', { class: 'btn-primary', text: `استيراد ${ok.length} صنفاً`,
+                           onclick: () => dlg.close('ok') })
+          : null)
+    );
+    dlg.addEventListener('close', () => { resolve(dlg.returnValue === 'ok'); dlg.remove(); });
+    document.body.append(dlg);
+    dlg.showModal();
+  });
+}
+
+async function commitImport(rows) {
+  const ph = State.pharmacyId;
+  const now = Date.now();
+
+  // الأصناف الموجودة: نطابق بالباركود أولاً ثم بالاسم، فلا تتكرر الأصناف
+  const existing = await db.products.where('pharmacy_id').equals(ph).toArray();
+  const byBarcode = new Map(existing.filter((p) => p.barcode).map((p) => [p.barcode, p]));
+  const byName = new Map(existing.map((p) => [p.name.trim().toLowerCase(), p]));
+
+  const newProducts = [], newBatches = [], newMoves = [], queueRows = [];
+  let reused = 0;
+
+  for (const r of rows) {
+    let prod = (r.barcode && byBarcode.get(r.barcode)) || byName.get(r.name.toLowerCase());
+    if (prod) {
+      reused++;
+    } else {
+      prod = { id: uuid(), pharmacy_id: ph, name: r.name, barcode: r.barcode,
+               category: r.category, is_deleted: 0, updated_at: now };
+      newProducts.push(prod);
+      if (r.barcode) byBarcode.set(r.barcode, prod);
+      byName.set(r.name.toLowerCase(), prod);
+      queueRows.push({ pharmacy_id: ph, action: 'upsert_product', payload: prod, status: 'pending', at: now });
+    }
+
+    const batch = {
+      id: uuid(), pharmacy_id: ph, product_id: prod.id, batch_number: r.batch,
+      expiry_end: r.expiry, sell_price_agorot: r.price, cost_price_agorot: r.cost,
+      quantity: r.qty, is_deleted: 0, updated_at: now,
+    };
+    newBatches.push(batch);
+    queueRows.push({ pharmacy_id: ph, action: 'upsert_batch',
+                     payload: { ...batch, quantity: undefined }, status: 'pending', at: now });
+
+    if (r.qty > 0) {
+      const move = { id: uuid(), pharmacy_id: ph, batch_id: batch.id, delta: r.qty,
+                     reason: 'import', ref_id: null, device_id: State.deviceId,
+                     user_id: State.user.id, at: now };
+      newMoves.push(move);
+      queueRows.push({ pharmacy_id: ph, action: 'stock_move', payload: move, status: 'pending', at: now });
+    }
+  }
+
+  try {
+    await db.transaction('rw', db.products, db.batches, db.moves, db.sync_queue, async () => {
+      if (newProducts.length) await db.products.bulkAdd(newProducts);
+      if (newBatches.length) await db.batches.bulkAdd(newBatches);
+      if (newMoves.length) await db.moves.bulkAdd(newMoves);
+      if (queueRows.length) await db.sync_queue.bulkAdd(queueRows);
+    });
+  } catch (e) {
+    toast('فشل الاستيراد: ' + e.message, 'error');
+    return;
+  }
+
+  await audit('import_excel', 'inventory', '',
+    `${newBatches.length} دفعة • ${newProducts.length} صنف جديد • ${reused} صنف موجود`);
+  toast(`تم استيراد ${newBatches.length} دفعة (${newProducts.length} صنف جديد)`, 'success');
+  State.invPage = 1;
+  renderInventory();
+  renderProductsDropdown();
+  renderDashboard();
+  syncNow();
+}
+
 /* ==================== ١٥. الزبائن والديون ==================== */
 
 async function addCustomer() {
@@ -1734,15 +2038,17 @@ async function boot() {
   });
   document.addEventListener('keydown', (e) => {
     if ($('login-view').classList.contains('hidden')) return;
+    // لا تلتقط الأرقام أثناء الكتابة في حقل: كتابة "PHM-001" كانت
+    // تُدخل 0 و0 و1 في الرقم السري أيضاً.
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if (/^[0-9]$/.test(e.key)) addPin(e.key);
-    if (e.key === 'Backspace' && document.activeElement !== $('pharmacy-id-input')) {
-      pinBuffer = pinBuffer.slice(0, -1); updateDots();
-    }
+    if (e.key === 'Backspace') { pinBuffer = pinBuffer.slice(0, -1); updateDots(); }
     if (e.key === 'Enter' && pinBuffer.length >= 4) attemptLogin();
   });
 
   $('theme-btn').addEventListener('click', toggleTheme);
-  $('logout-btn').addEventListener('click', () => logout(true));
+  $('logout-btn').addEventListener('click', () => logout());
   $('btn-scan-pos').addEventListener('click', () => startScanner('search-input'));
   $('btn-scan-inv').addEventListener('click', () => startScanner('med-barcode'));
   $('btn-checkout').addEventListener('click', () => checkout(false));
@@ -1750,6 +2056,9 @@ async function boot() {
   $('btn-add-product').addEventListener('click', addProduct);
   $('btn-add-batch').addEventListener('click', addBatch);
   $('inv-search').addEventListener('input', () => { State.invPage = 1; renderInventory(); });
+  $('btn-template').addEventListener('click', downloadTemplate);
+  $('btn-import-excel').addEventListener('click', () => $('excel-file').click());
+  $('excel-file').addEventListener('change', handleExcelFile);
   $('btn-add-customer').addEventListener('click', addCustomer);
   $('btn-save-settings').addEventListener('click', saveSettings);
   $('btn-add-employee').addEventListener('click', addEmployee);

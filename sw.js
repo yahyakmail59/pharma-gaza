@@ -19,6 +19,7 @@ const SHELL = [
   './manifest.webmanifest',
   './vendor/dexie.min.js',
   './vendor/html5-qrcode.min.js',
+  './vendor/xlsx.min.js',
 ];
 
 self.addEventListener('install', (e) => {

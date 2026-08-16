@@ -180,6 +180,19 @@
         <button type="button" class="btn-primary" id="btn-add-batch" style="margin-block-start:16px;">+ إضافة الدفعة</button>
       </div>
 
+      <div class="form-card">
+        <h3>📄 استيراد أصناف من ملف إكسل</h3>
+        <p style="color:var(--muted-dark);font-size:13.5px;line-height:1.8;margin-block-end:14px;">
+          نزّل النموذج، املأه بأصنافك، ثم ارفعه. يقبل <code>.xlsx</code> و<code>.xls</code> و<code>.csv</code>.
+          يُعرض لك ملخّص للمراجعة قبل الحفظ، ولا يُضاف شيء قبل موافقتك.
+        </p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button type="button" class="btn-ghost" id="btn-template">⬇ تنزيل النموذج</button>
+          <button type="button" class="btn-primary" id="btn-import-excel">⬆ رفع ملف الأصناف</button>
+          <input type="file" id="excel-file" accept=".xlsx,.xls,.csv" class="hidden">
+        </div>
+      </div>
+
       <input type="search" id="inv-search" placeholder="ابحث في المخزون بالاسم أو الباركود أو رقم الدفعة">
 
       <div id="inv-wrap">

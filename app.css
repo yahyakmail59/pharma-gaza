@@ -8,6 +8,11 @@
    ============================================================ */
 
 :root {
+  /* يجعل المتصفح يرسم عناصر النظام (قوائم select، أشرطة التمرير،
+     منتقي التاريخ) بألوان داكنة. بدونه تظهر خيارات القائمة بخلفية
+     بيضاء ونص أبيض فلا تُقرأ. */
+  color-scheme: dark;
+  --field-bg: #14141c;          /* خلفية صلبة للحقول — لا شفافة */
   --bg: #050508;
   --surface: rgba(255, 255, 255, 0.03);
   --surface-hover: rgba(255, 255, 255, 0.06);
@@ -31,6 +36,8 @@
 }
 
 [data-theme="light"] {
+  color-scheme: light;
+  --field-bg: #ffffff;
   --bg: #f8f9fa;
   --surface: #ffffff;
   --surface-hover: #f1f3f5;
@@ -95,7 +102,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 
 input, select, textarea {
-  background: var(--surface);
+  background: var(--field-bg);
   border: 1px solid var(--border);
   color: var(--text);
   padding: 13px 15px;
@@ -105,6 +112,11 @@ input, select, textarea {
   outline: none;
   font-family: inherit;
   transition: border-color 0.2s, box-shadow 0.2s;
+}
+/* الخيارات يرسمها النظام لا الصفحة — تحتاج ألواناً صريحة */
+select option, select optgroup {
+  background: var(--field-bg);
+  color: var(--text);
 }
 input:focus, select:focus {
   border-color: var(--primary);

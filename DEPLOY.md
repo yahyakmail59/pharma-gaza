@@ -92,6 +92,20 @@ pharma-saas/
 
 > مجلد `worker/` و`dev-server.js` و`_backup_*` غير ضارة لو رُفعت (ملفات نصية لا تُنفَّذ)، لكن الأنظف حذفها من نسخة الرفع.
 
+### ⚠️ اجعل المشروع عاماً (مطلوب)
+
+منذ ٢٨ يوليو ٢٠٢٦، كل مشروع جديد على Netlify يبدأ **خاصاً**. لو فتحت الرابط ستجد:
+
+> *This project is private. Only project members can view this site.*
+
+الحل:
+
+**Project configuration → General → Visitor access → Project visibility → Public**
+
+هذا إعداد في Netlify لا علاقة له بملفات المشروع. بدونه لن تستطيع أي صيدلية فتح الرابط.
+
+> لا تستخدم خيار **Password protected**: يضع كلمة مرور على الموقع كله، فتُحجب الصيدليات أيضاً.
+
 ---
 
 ## الخطوة ٥ — إغلاق CORS
@@ -101,6 +115,16 @@ pharma-saas/
 ```
 ALLOWED_ORIGINS = https://اسم-موقعك.netlify.app
 ```
+الخطوات
+
+نفس المكان الذي أضفت فيه ADMIN_PASSWORD:
+
+Workers & Pages ← pharma-sync-api ← Settings
+قسم Variables and Secrets ← + Add
+Type: اختر Text
+Variable name: اكتب ALLOWED_ORIGINS يدوياً (لن يظهر في قائمة مقترحات)
+Value: رابط موقعك على Netlify
+Deploy
 
 بدون هذا يقبل السيرفر الطلبات من أي موقع. **Save and deploy**.
 
