@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>لوحة تحكم المنصة - Super Admin</title>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Tajawal', sans-serif; background: #050508; color: #fafafa; padding: 20px; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        h1 { color: #00E5A8; text-align: center; margin-bottom: 30px; }
+        .card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); padding: 24px; border-radius: 16px; margin-bottom: 24px; }
+        h2 { font-size: 20px; margin-bottom: 16px; color: #fafafa; }
+        input, select { width: 100%; padding: 12px; margin-bottom: 12px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #fff; border-radius: 8px; }
+        button { padding: 10px 16px; border: none; border-radius: 8px; font-weight: 700; cursor: pointer; font-family: inherit; }
+        .btn-success { background: #00E5A8; color: #050508; } .btn-danger { background: #FF5A5A; color: #fff; }
+        .btn-warning { background: #FBBF24; color: #050508; } .btn-info { background: #3B82F6; color: #fff; }
+        .btn-secondary { background: rgba(255,255,255,0.1); color: #fff; }
+        table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+        th, td { padding: 12px; text-align: right; border-bottom: 1px solid rgba(255,255,255,0.1); font-size: 14px; }
+        th { color: #a1a1aa; }
+        .badge { padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: 700; }
+        .badge-active { background: rgba(0,229,168,0.2); color: #00E5A8; }
+        .badge-suspended { background: rgba(255,90,90,0.2); color: #FF5A5A; }
+        .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>إدارة منصة الصيدليات (SaaS Admin)</h1>
+
+        <!-- إنشاء صيدلية -->
+        <div class="card">
+            <h2>➕ إنشاء صيدلية جديدة</h2>
+            <div class="grid-2">
+                <input type="text" id="pharmacy_id" placeholder="رمز الصيدلية (PHM-001)">
+                <input type="text" id="name" placeholder="اسم الصيدلية">
+                <input type="text" id="phone" placeholder="رقم الهاتف">
+                <input type="text" id="address" placeholder="العنوان">
+                <input type="text" id="currency" placeholder="رمز العملة (₪)" value="₪">
+                <input type="number" id="owner_pin" placeholder="رقم المالك السري (4 أرقام)">
+            </div>
+            <button class="btn-success" onclick="createPharmacy()">إنشاء</button>
+        </div>
+
+        <!-- قائمة الصيدليات -->
+        <div class="card">
+            <h2>📋 الصيدليات المشتركة</h2>
+            <table>
+                <thead>
+                    <tr><th>الرمز</th><th>الاسم</th><th>الهاتف</th><th>الحالة</th><th>إجراءات</th></tr>
+                </thead>
+                <tbody id="pharmacies-list"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // ضع رابط الـ Worker الخاص بك
+        const WORKER_URL = 'https://pharma-sync-api.yahyakmail59.workers.dev';
+        // مفتاح الأمان (يجب أن يطابق ما وضعته في الـ Worker)
+        const ADMIN_SECRET = 'SUPER_ADMIN_SECRET_123'; 
+
+        async function fetchPharmacies() {
+            const res = await fetch(WORKER_URL + '/api/admin/get-pharmacies', { headers: { 'X-Admin-Secret': ADMIN_SECRET } });
+            const data = await res.json();
+            const list = document.getElementById('pharmacies-list');
+            list.innerHTML = data.map(p => `
+                <tr>
+                    <td>${p.pharmacy_id}</td>
+                    <td>${p.name}</td>
+                    <td>${p.phone || '-'}</td>
+                    <td><span class="badge ${p.is_active ? 'badge-active' : 'badge-suspended'}">${p.is_active ? 'مفعّل' : 'موقوف'}</span></td>
+                    <td class="actions">
+                        <button class="btn-info" onclick="resetPin('${p.pharmacy_id}')">إعادة تعيين PIN</button>
+                        <button class="btn-warning" onclick="toggleStatus('${p.pharmacy_id}', ${p.is_active})">${p.is_active ? 'إيقاف الاشتراك' : 'تفعيل'}</button>
+                        <button class="btn-danger" onclick="deletePharmacy('${p.pharmacy_id}')">حذف نهائي</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        async function createPharmacy() {
+            const data = {
+                pharmacy_id: document.getElementById('pharmacy_id').value,
+                name: document.getElementById('name').value,
+                phone: document.getElementById('phone').value,
+                address: document.getElementById('address').value,
+                currency: document.getElementById('currency').value,
+                owner_pin: document.getElementById('owner_pin').value
+            };
+            const res = await fetch(WORKER_URL + '/api/admin/create-pharmacy', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': ADMIN_SECRET },
+                body: JSON.stringify(data)
+            });
+            if(res.ok) { alert('تم الإنشاء'); fetchPharmacies(); }
+        }
+
+        async function toggleStatus(id, currentStatus) {
+            const newStatus = currentStatus ? 0 : 1;
+            const res = await fetch(WORKER_URL + '/api/admin/update-pharmacy', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': ADMIN_SECRET },
+                body: JSON.stringify({ pharmacy_id: id, is_active: newStatus, name: '', phone: '', address: '', currency: '' })
+            });
+            if(res.ok) { alert('تم تغيير الحالة'); fetchPharmacies(); }
+        }
+
+        async function resetPin(id) {
+            const newPin = prompt('أدخل الرقم السري الجديد للمالك (4 أرقام):');
+            if(!newPin || newPin.length !== 4) return alert('يجب أن يكون 4 أرقام');
+            const res = await fetch(WORKER_URL + '/api/admin/reset-pin', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': ADMIN_SECRET },
+                body: JSON.stringify({ pharmacy_id: id, new_pin: newPin })
+            });
+            if(res.ok) alert('تم تحديث الرقم السري');
+        }
+
+        async function deletePharmacy(id) {
+            if(!confirm(`هل أنت متأكد من حذف ${id} وكل بياناتها نهائياً؟`)) return;
+            const res = await fetch(WORKER_URL + '/api/admin/delete-pharmacy', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': ADMIN_SECRET },
+                body: JSON.stringify({ pharmacy_id: id })
+            });
+            if(res.ok) { alert('تم الحذف'); fetchPharmacies(); }
+        }
+
+        // تحميل القائمة عند فتح الصفحة
+        fetchPharmacies();
+    </script>
+</body>
+</html>

@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>PharmaGaza SaaS - Enterprise</title>
+    <script src="https://unpkg.com/dexie/dist/dexie.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #050508; --surface: rgba(255, 255, 255, 0.03); --surface-hover: rgba(255, 255, 255, 0.06);
+            --border: rgba(255, 255, 255, 0.08); --border-hover: rgba(255, 255, 255, 0.15);
+            --text: #fafafa; --muted: #a1a1aa; --muted-dark: #71717a;
+            --primary: #00E5A8; --primary-glow: rgba(0, 229, 168, 0.2); 
+            --danger: #FF5A5A; --danger-glow: rgba(255, 90, 90, 0.2); 
+            --warning: #FBBF24; --info: #3B82F6; --purple: #8b5cf6;
+            --shadow-color: rgba(0,0,0,0.5);
+            --body-gradient: radial-gradient(circle at 50% 0%, rgba(0, 229, 168, 0.05), transparent 60%);
+            --btn-text-color: #050508; --blur-bg: rgba(10, 10, 15, 0.8);
+        }
+        [data-theme="light"] {
+            --bg: #F8F9FA; --surface: #FFFFFF; --surface-hover: #F1F3F5;
+            --border: #E9ECEF; --border-hover: #CED4DA;
+            --text: #1A1D1F; --muted: #495057; --muted-dark: #868E96;
+            --primary: #00C39A; --primary-glow: rgba(0, 195, 154, 0.15); 
+            --danger: #FA5252; --danger-glow: rgba(250, 82, 82, 0.1); 
+            --warning: #F59F00; --info: #228BE6; --purple: #7950F2;
+            --shadow-color: rgba(0,0,0,0.05);
+            --body-gradient: radial-gradient(circle at 50% 0%, rgba(0, 195, 154, 0.05), transparent 60%);
+            --btn-text-color: #FFFFFF; --blur-bg: rgba(255, 255, 255, 0.8);
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Tajawal', 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+        body { background: var(--bg); color: var(--text); display: flex; justify-content: center; align-items: center; min-height: 100vh; overflow-x: hidden; background-image: var(--body-gradient); transition: background-color 0.3s ease, color 0.3s ease; }
+        .hidden { display: none !important; }
+        button { cursor: pointer; border: none; border-radius: 12px; font-weight: 600; transition: 0.2s ease; background: var(--surface); color: var(--text); }
+        button:hover { background: var(--surface-hover); transform: translateY(-1px); }
+        input, select { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 14px 16px; border-radius: 12px; width: 100%; font-size: 16px; outline: none; transition: 0.2s; }
+        input:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 4px var(--primary-glow); background: var(--surface-hover); }
+        label { color: var(--muted-dark); font-size: 13px; margin-bottom: 6px; display: block; font-weight: 500; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; } ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
+
+        #toast-container { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 9999; display: flex; flex-direction: column; gap: 10px; width: 90%; max-width: 400px; }
+        .toast { padding: 14px 24px; border-radius: 12px; color: white; font-weight: 600; backdrop-filter: blur(12px); border: 1px solid var(--border); animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1); text-align: center; }
+        .toast.success { background: var(--primary); color: var(--btn-text-color); box-shadow: 0 8px 32px var(--primary-glow); } 
+        .toast.error { background: var(--danger); color: white; } .toast.info { background: var(--info); color: white; }
+        @keyframes slideIn { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+        #login-view { background: var(--blur-bg); backdrop-filter: blur(20px); padding: 48px 24px; border-radius: 24px; border: 1px solid var(--border); text-align: center; width: 100%; max-width: 380px; box-shadow: 0 0 80px var(--shadow-color); margin: 16px; }
+        #login-view h1 { color: var(--text); margin-bottom: 24px; font-size: 24px; font-weight: 700; }
+        .pin-dots { display: flex; justify-content: center; gap: 16px; margin: 24px 0; }
+        .pin-dots span { width: 14px; height: 14px; border-radius: 50%; background: var(--border); transition: 0.2s; }
+        .pin-dots span.active { background: var(--primary); box-shadow: 0 0 12px var(--primary-glow); }
+        .pin-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 24px; }
+        .pin-pad button { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 18px; font-size: 20px; font-weight: 500; }
+        .pin-pad .action-btn { background: var(--primary); color: var(--btn-text-color); font-weight: 700; border: none; box-shadow: 0 4px 20px var(--primary-glow); }
+        .pin-pad .danger-btn { background: transparent; border: 1px solid var(--border); color: var(--danger); }
+
+        #app-view { width: 100%; height: 100vh; display: flex; flex-direction: column; }
+        .header { background: var(--blur-bg); backdrop-filter: blur(20px); padding: 12px 16px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); z-index: 10; }
+        .nav-btns { display: flex; gap: 4px; background: var(--surface); padding: 6px; border-radius: 14px; border: 1px solid var(--border); overflow-x: auto; max-width: 100%; }
+        .nav-btns button { background: transparent; color: var(--muted); padding: 8px 16px; border-radius: 10px; font-size: 14px; white-space: nowrap; }
+        .nav-btns button.active { background: var(--surface-hover); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-hover); }
+        .status-bar { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--muted); }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 10px currentColor; }
+        .dot-online { background: var(--primary); color: var(--primary); } .dot-offline { background: var(--warning); color: var(--warning); animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+        .content-area { flex: 1; overflow-y: auto; padding: 24px 16px; padding-bottom: 100px; }
+
+        .dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin-bottom: 32px; }
+        .dash-card { background: var(--surface); padding: 20px; border-radius: 20px; border: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 20px var(--shadow-color); }
+        .dash-card .icon { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 10px; font-size: 18px; background: var(--surface-hover); }
+        .dash-card .value { font-size: 28px; font-weight: 800; letter-spacing: -1px; } .dash-card .title { color: var(--muted-dark); font-size: 12px; }
+
+        .pos-container { display: flex; flex-direction: column; gap: 16px; height: 100%; }
+        .pos-left { flex: 2; display: flex; flex-direction: column; position: relative; }
+        .search-wrapper { position: relative; margin-bottom: 12px; display: flex; gap: 8px; }
+        .search-wrapper input { flex: 1; }
+        .btn-scan { background: var(--surface-hover); border: 1px solid var(--border); width: 50px; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+        .search-dropdown { position: absolute; top: 60px; right: 0; left: 0; background: var(--blur-bg); backdrop-filter: blur(20px); border: 1px solid var(--border-hover); border-radius: 16px; z-index: 100; max-height: 320px; overflow-y: auto; box-shadow: 0 20px 40px var(--shadow-color); }
+        .search-item { padding: 16px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+        .search-item:last-child { border-bottom: none; } .search-item:hover { background: var(--surface-hover); }
+
+        .cart-area { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 16px; overflow-y: auto; box-shadow: 0 4px 20px var(--shadow-color); min-height: 200px; }
+        .cart-item { display: flex; justify-content: space-between; align-items: center; background: var(--surface); border: 1px solid var(--border); padding: 14px; border-radius: 14px; margin-bottom: 12px; }
+        .item-info h3 { font-size: 15px; font-weight: 600; } .item-info p { font-size: 11px; color: var(--muted-dark); margin-top: 4px; }
+        .qty-control { display: flex; align-items: center; gap: 10px; background: var(--bg); padding: 6px 10px; border-radius: 10px; border: 1px solid var(--border); }
+        .qty-control button { background: transparent; color: var(--muted); font-size: 16px; width: 24px; height: 24px; }
+
+        .pos-right { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 4px 20px var(--shadow-color); }
+        .summary-total { font-size: 32px; color: var(--text); font-weight: 800; text-align: center; margin: 16px 0; }
+        .btn-sell { background: var(--primary); color: var(--btn-text-color); padding: 16px; font-size: 16px; border-radius: 12px; font-weight: 700; box-shadow: 0 8px 24px var(--primary-glow); }
+        .btn-sell-print { background: var(--surface-hover); color: var(--text); padding: 14px; font-size: 15px; border-radius: 12px; border: 1px solid var(--border-hover); margin-top: 10px; }
+
+        .table-container { overflow-x: auto; border-radius: 20px; border: 1px solid var(--border); box-shadow: 0 4px 20px var(--shadow-color); background: var(--surface); margin-top: 16px; }
+        table { width: 100%; border-collapse: collapse; min-width: 600px; }
+        th, td { padding: 14px; text-align: right; border-bottom: 1px solid var(--border); }
+        th { color: var(--muted-dark); font-size: 13px; text-transform: uppercase; background: var(--surface-hover); }
+        .badge { padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+        .badge-ok { background: var(--primary-glow); color: var(--primary); border: 1px solid var(--primary); } 
+        .badge-warn { background: rgba(245, 159, 0, 0.1); color: var(--warning); border: 1px solid var(--warning); } 
+        .badge-danger { background: var(--danger-glow); color: var(--danger); border: 1px solid var(--danger); }
+
+        .form-card { background: var(--surface); padding: 20px; border-radius: 20px; border: 1px solid var(--border); margin-bottom: 24px; box-shadow: 0 4px 20px var(--shadow-color); }
+        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
+        .btn-primary { background: var(--primary); color: var(--btn-text-color); padding: 12px; width: 100%; font-size: 15px; border-radius: 12px; font-weight: 700; }
+        .btn-danger { background: var(--danger-glow); color: var(--danger); padding: 8px 16px; font-size: 13px; border: 1px solid var(--danger); width: 100%; }
+        .btn-info { background: rgba(59, 130, 246, 0.1); color: var(--info); padding: 8px 16px; font-size: 13px; border: 1px solid var(--info); }
+        .section-title { font-size: 20px; margin-bottom: 24px; color: var(--text); font-weight: 700; }
+        #print-iframe { display: none; }
+        .alert-item { background: var(--surface); padding: 14px; border-radius: 14px; border: 1px solid var(--border); margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 10px var(--shadow-color); gap: 10px; }
+        .alert-expiry { border-right: 3px solid var(--danger); } .alert-low { border-right: 3px solid var(--warning); }
+        .btn-pill { background: var(--surface-hover); border: 1px solid var(--border); padding: 5px 12px; font-size: 12px; border-radius: 8px; color: var(--info); }
+        .theme-toggle { background: var(--surface); border: 1px solid var(--border); width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 10px; font-size: 16px; }
+
+        #reader { width: 100%; border-radius: 12px; overflow: hidden; }
+
+        @media (min-width: 768px) {
+            .content-area { padding: 32px; }
+            .pos-container { flex-direction: row; height: calc(100vh - 140px); }
+            .header { padding: 16px 32px; flex-wrap: nowrap; }
+            .nav-btns { overflow-x: visible; }
+            .dash-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+            .dash-card .value { font-size: 36px; }
+        }
+    </style>
+</head>
+<body>
+    <div id="toast-container"></div>
+    <iframe id="print-iframe"></iframe>
+
+    <div id="login-view">
+        <h1 id="login-title">تسجيل الدخول للنظام</h1>
+        <input type="text" id="pharmacy-id-input" placeholder="رمز الصيدلية (مثال: PHM-001)" style="margin-bottom: 20px; text-align: center; font-size: 18px;">
+        <div class="pin-dots"><span id="d1"></span><span id="d2"></span><span id="d3"></span><span id="d4"></span></div>
+        <div class="pin-pad">
+            <button onclick="addPin('1')">1</button><button onclick="addPin('2')">2</button><button onclick="addPin('3')">3</button>
+            <button onclick="addPin('4')">4</button><button onclick="addPin('5')">5</button><button onclick="addPin('6')">6</button>
+            <button onclick="addPin('7')">7</button><button onclick="addPin('8')">8</button><button onclick="addPin('9')">9</button>
+            <button class="danger-btn" onclick="clearPin()">مسح</button><button onclick="addPin('0')">0</button><button class="action-btn" onclick="login()">دخول</button>
+        </div>
+    </div>
+
+    <div id="app-view" class="hidden">
+        <div class="header">
+            <div class="nav-btns" id="nav-container"></div>
+            <div class="status-bar">
+                <div style="display:flex; align-items:center; gap:8px;"><div class="status-dot dot-online" id="net-dot"></div><span id="net-text">متصل</span></div>
+                <button onclick="toggleTheme()" id="theme-btn" class="theme-toggle">🌙</button>
+                <button onclick="logout()" class="btn-danger">خروج</button>
+            </div>
+        </div>
+        <div class="content-area">
+            <div id="dash-view">
+                <h2 class="section-title">لوحة التحكم</h2>
+                <div class="dash-grid">
+                    <div class="dash-card card-green"><div class="icon">💰</div><div class="value" id="stat-sales" style="color:var(--primary)">0</div><div class="title">مبيعات اليوم</div></div>
+                    <div class="dash-card card-blue"><div class="icon">🧾</div><div class="value" id="stat-invoices" style="color:var(--info)">0</div><div class="title">عدد الفواتير</div></div>
+                    <div class="dash-card card-orange"><div class="icon">⚠️</div><div class="value" id="stat-low-stock" style="color:var(--warning)">0</div><div class="title">نواقص (تحتاج شراء)</div></div>
+                    <div class="dash-card card-red"><div class="icon">⏳</div><div class="value" id="stat-expiring" style="color:var(--danger)">0</div><div class="title">أدوية قاربت على الانتهاء</div></div>
+                </div>
+                <h3 class="section-title" style="font-size:18px;">التنبيهات الحرجة</h3>
+                <div id="alerts-container"></div>
+            </div>
+
+            <div id="pos-view" class="hidden">
+                <div class="pos-container">
+                    <div class="pos-left">
+                        <div class="search-wrapper">
+                            <input type="text" id="search-input" oninput="liveSearch()" placeholder="ابحث بالاسم أو الباركود..." autofocus>
+                            <button class="btn-scan" onclick="startScanner('search-input', 'pos')">📷</button>
+                            <div id="search-dropdown" class="search-dropdown hidden"></div>
+                        </div>
+                        <div class="cart-area" id="cart-area"><p style="text-align: center; color: var(--muted-dark); margin-top: 50px;">السلة فارغة</p></div>
+                    </div>
+                    <div class="pos-right">
+                        <div>
+                            <h2 style="color: var(--muted); margin-bottom: 16px; font-size:16px;">ملخص الفاتورة</h2>
+                            <div class="form-grid" style="margin-bottom:16px;">
+                                <select id="pos-customer" style="padding:10px; font-size:14px;"><option value="walk_in">زبون عادي (كاشير)</option></select>
+                                <select id="pos-payment" style="padding:10px; font-size:14px;"><option value="cash">نقدي</option><option value="debt">آجل (دين)</option></select>
+                            </div>
+                            <div class="summary-total" id="grand-total">0.00</div>
+                            <p style="text-align:center; color:var(--muted-dark); font-size:14px;" id="currency-label">₪</p>
+                        </div>
+                        <div>
+                            <button class="btn-sell" onclick="checkout(false)">إتمام البيع</button>
+                            <button class="btn-sell-print" onclick="checkout(true)">بيع وطباعة</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="inv-view" class="hidden">
+                <h2 class="section-title">إدارة المخزون</h2>
+                <div class="form-card">
+                    <h3 style="margin-bottom: 16px; font-size:16px;">إضافة منتج جديد</h3>
+                    <div class="form-grid">
+                        <div><label>اسم الدواء</label><input type="text" id="med-name" placeholder="باراسيتامول"></div>
+                        <div><label>الصنف / الفئة</label><input type="text" id="med-category" placeholder="مسكنات"></div>
+                        <div style="position:relative;"><label>الباركود</label><input type="text" id="med-barcode" placeholder="00000"><button class="btn-scan" style="position:absolute; left:5px; top:38px; height:40px;" onclick="startScanner('med-barcode', 'inv')">📷</button></div>
+                    </div>
+                    <button class="btn-primary" onclick="addProduct()" style="margin-top: 16px; width: auto; padding: 12px 24px;">+ إضافة للكتالوج</button>
+                </div>
+                <div class="form-card">
+                    <h3 style="margin-bottom: 16px; font-size:16px;">إضافة دفعة لمخزون دواء موجود</h3>
+                    <div class="form-grid">
+                        <div><label>اختر الدواء</label><select id="batch-product-id"></select></div>
+                        <div><label>رقم الدفعة</label><input type="text" id="batch-number" placeholder="B1"></div>
+                        <div><label>الصلاحية</label><input type="month" id="batch-expiry"></div>
+                        <div><label>الكمية</label><input type="number" id="batch-qty" placeholder="0"></div>
+                        <div><label>سعر التكلفة</label><input type="number" id="batch-cost" placeholder="0.0"></div>
+                        <div><label>سعر البيع</label><input type="number" id="batch-price" placeholder="0.0"></div>
+                    </div>
+                    <button class="btn-primary" onclick="addBatch()" style="margin-top: 16px; width: auto; padding: 12px 24px;">+ إضافة الدفعة للمخزون</button>
+                </div>
+                <div class="table-container">
+                    <table><thead><tr><th>اسم الدواء</th><th>الصنف</th><th>رقم الدفعة</th><th>الصلاحية</th><th>الكمية</th><th>السعر</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody id="inv-body"></tbody></table>
+                </div>
+            </div>
+
+            <div id="cust-view" class="hidden">
+                <h2 class="section-title">إدارة الزبائن والديون</h2>
+                <div class="form-card">
+                    <div class="form-grid">
+                        <div><label>اسم الزبون</label><input type="text" id="cust-name" placeholder="محمد أحمد"></div>
+                        <div><label>رقم الهاتف</label><input type="text" id="cust-phone" placeholder="059..."></div>
+                    </div>
+                    <button class="btn-primary" onclick="addCustomer()" style="margin-top: 16px; width: auto; padding: 12px 24px;">+ إضافة الزبون</button>
+                </div>
+                <div class="table-container"><table><thead><tr><th>اسم الزبون</th><th>الهاتف</th><th>الديون المتراكمة</th><th>إجراءات</th></tr></thead><tbody id="cust-body"></tbody></table></div>
+            </div>
+
+            <div id="rep-view" class="hidden">
+                <h2 class="section-title">التقارير وإغلاق اليوم</h2>
+                <div class="dash-grid">
+                    <div class="dash-card card-green"><div class="icon">💵</div><div class="value" id="rep-cash" style="color:var(--primary)">0</div><div class="title">إجمالي النقدي المتوقع</div></div>
+                    <div class="dash-card card-red"><div class="icon">📉</div><div class="value" id="rep-debts" style="color:var(--danger)">0</div><div class="title">إجمالي الديون اليوم</div></div>
+                    <div class="dash-card card-blue"><div class="icon">📊</div><div class="value" id="rep-profit" style="color:var(--info)">0</div><div class="title">صافي الربح التقديري</div></div>
+                </div>
+                <div class="form-card" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
+                    <div><h3 style="font-size:16px;">طباعة تقرير اليوم (Z-Report)</h3><p style="color:var(--muted-dark); font-size:13px;">يطبع ملخص مبيعات اليوم للجرد المحاسبي.</p></div>
+                    <button class="btn-info" style="padding:14px 24px; width:auto;" onclick="printEOD()">طباعة وإغلاق اليوم</button>
+                </div>
+                <div class="table-container"><table><thead><tr><th>رقم الفاتورة</th><th>الوقت</th><th>البائع</th><th>نوع الدفع</th><th>الإجمالي</th></tr></thead><tbody id="rep-invoices-body"></tbody></table></div>
+            </div>
+
+            <div id="set-view" class="hidden">
+                <h2 class="section-title">إعدادات الصيدلية</h2>
+                <div class="form-card">
+                    <h3 style="margin-bottom: 16px; font-size:16px;">بيانات الصيدلية</h3>
+                    <div class="form-grid">
+                        <div><label>اسم الصيدلية</label><input type="text" id="set-name" placeholder="صيدلية الشفاء"></div>
+                        <div><label>رقم الهاتف</label><input type="text" id="set-phone" placeholder="059..."></div>
+                        <div><label>العنوان</label><input type="text" id="set-address" placeholder="غزة - شارع"></div>
+                        <div><label>رمز العملة</label><input type="text" id="set-currency" placeholder="₪"></div>
+                    </div>
+                    <button class="btn-primary" onclick="saveSettings()" style="margin-top: 16px; width: auto; padding: 12px 24px;">حفظ الإعدادات</button>
+                </div>
+                <div class="form-card">
+                    <h3 style="margin-bottom: 16px; font-size:16px;">إدارة الموظفين وكلمات المرور (PIN)</h3>
+                    <div class="form-grid">
+                        <div><label>اسم الموظف</label><input type="text" id="emp-name" placeholder="محمد"></div>
+                        <div><label>الصلاحية</label><select id="emp-role"><option value="cashier">كاشير</option><option value="pharmacist">صيدلي</option></select></div>
+                        <div><label>الرمز السري (PIN)</label><input type="number" id="emp-pin" placeholder="4 أرقام"></div>
+                    </div>
+                    <button class="btn-primary" onclick="addEmployee()" style="margin-top: 16px; width: auto; padding: 12px 24px;">+ إضافة موظف</button>
+                    <div class="table-container" style="margin-top:20px;"><table><thead><tr><th>الاسم</th><th>الصلاحية</th><th>الرمز السري</th><th>إجراء</th></tr></thead><tbody id="emp-body"></tbody></table></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentPharmacyId = localStorage.getItem('pharmacy_id') || '';
+        document.getElementById('pharmacy-id-input').value = currentPharmacyId;
+
+        const db = new Dexie('PharmaSaaS_DB');
+        db.version(1).stores({
+            users: 'id, pharmacy_id, name, role, pin',
+            products: 'id, pharmacy_id, name, barcode, category',
+            batches: 'id, pharmacy_id, product_id, batch_number, expiry_date, quantity, sell_price, cost_price',
+            invoices: 'id, pharmacy_id, invoice_number, total, user_id, cashier_name, created_at, is_voided, items_json, customer_id, payment_type',
+            customers: 'id, pharmacy_id, name, phone, debt',
+            settings: 'id, pharmacy_id, name, phone, address, currency',
+            sync_queue: '++id, pharmacy_id, entity_type, entity_id, action, status'
+        });
+
+        let currentUser = null; let pin = ''; let lastInvoiceId = null; let settings = { name: 'صيدلية', phone: '', address: '', currency: '₪' };
+
+        function showToast(msg, type = 'success') {
+            const c = document.getElementById('toast-container'); const t = document.createElement('div'); t.className = `toast ${type}`; t.innerText = msg; c.appendChild(t); setTimeout(() => t.remove(), 3000);
+        }
+
+        let html5QrCode;
+        async function startScanner(inputId, view) {
+            document.getElementById(`${view}-view`).insertAdjacentHTML('beforeend', '<div id="scanner-modal" class="form-card" style="position:fixed; top:0; left:0; right:0; bottom:0; z-index:1000; background:var(--bg); padding:20px;"><div id="reader" style="width:100%; margin-top:50px;"></div><button onclick="stopScanner()" class="btn-danger" style="margin-top:20px;">إغلاق</button></div>');
+            html5QrCode = new Html5Qrcode("reader");
+            try {
+                await html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, (decodedText) => {
+                    document.getElementById(inputId).value = decodedText;
+                    if(inputId === 'search-input') liveSearch();
+                    stopScanner();
+                });
+            } catch (err) { showToast('فشل فتح الكاميرا', 'error'); stopScanner(); }
+        }
+        async function stopScanner() { if(html5QrCode) { await html5QrCode.stop(); html5QrCode.clear(); } const m = document.getElementById('scanner-modal'); if(m) m.remove(); }
+
+        function addPin(num) { if(pin.length < 4) { pin += num; updateDots(); if(pin.length === 4) login(); } }
+        function clearPin() { pin = ''; updateDots(); }
+        function updateDots() { for(let i=1; i<=4; i++) document.getElementById('d'+i).className = pin.length >= i ? 'active' : ''; }
+        
+        // إصلاح دعم لوحة المفاتيح
+        document.addEventListener('keydown', (e) => {
+            const isLoginVisible = !document.getElementById('login-view').classList.contains('hidden');
+            if (!currentUser && isLoginVisible) {
+                if (document.activeElement.id === 'pharmacy-id-input') return; 
+                if (e.key >= '0' && e.key <= '9') { e.preventDefault(); addPin(e.key); }
+                if (e.key === 'Backspace') { e.preventDefault(); clearPin(); }
+                if (e.key === 'Enter' && pin.length > 0) { login(); }
+            }
+        });
+
+        async function login() {
+            currentPharmacyId = document.getElementById('pharmacy-id-input').value.trim();
+            const enteredPin = pin;
+            if (!currentPharmacyId || enteredPin.length !== 4) return;
+
+            const localUser = await db.users.where('pharmacy_id').equals(currentPharmacyId).and(u => u.pin === enteredPin).first();
+            if (localUser) { currentUser = localUser; enterApp(); return; }
+
+            showToast('جاري التحقق من السيرفر...', 'info');
+            try {
+                const res = await fetch(WORKER_URL + '/api/login', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pharmacy_id: currentPharmacyId, pin: enteredPin })
+                });
+                if (res.ok) {
+                    const data = await res.json(); currentUser = data.user;
+                    await db.users.put(currentUser);
+                    if (data.settings) { await db.settings.put(data.settings); settings = data.settings; }
+                    enterApp();
+                } else { showToast('رمز الصيدلية أو الرقم السري غير صحيح', 'error'); clearPin(); }
+            } catch (e) { showToast('لا يمكن الاتصال بالسيرفر. تأكد من الإنترنت.', 'error'); clearPin(); }
+        }
+
+        function enterApp() {
+            localStorage.setItem('pharmacy_id', currentPharmacyId);
+            document.getElementById('login-view').classList.add('hidden');
+            document.getElementById('app-view').classList.remove('hidden');
+            buildNav(); showView('dash-view'); renderAll(); clearPin();
+            showToast(`مرحباً ${currentUser.name}`, 'info');
+        }
+        function logout() { currentUser = null; document.getElementById('app-view').classList.add('hidden'); document.getElementById('login-view').classList.remove('hidden'); }
+
+        function buildNav() {
+            const nav = document.getElementById('nav-container');
+            let html = `<button id="nav-dash" class="active" onclick="showView('dash-view')">الرئيسية</button><button id="nav-pos" onclick="showView('pos-view')">الكاشير</button>`;
+            if (currentUser.role !== 'cashier') html += `<button id="nav-inv" onclick="showView('inv-view')">المخزون</button>`;
+            html += `<button id="nav-cust" onclick="showView('cust-view')">الزبائن</button>`;
+            if (currentUser.role === 'owner') { html += `<button id="nav-rep" onclick="showView('rep-view')">التقارير</button><button id="nav-set" onclick="showView('set-view')">الإعدادات</button>`; }
+            nav.innerHTML = html;
+        }
+
+        function showView(viewId) {
+            ['dash-view', 'pos-view', 'inv-view', 'cust-view', 'rep-view', 'set-view'].forEach(v => document.getElementById(v).classList.add('hidden'));
+            document.getElementById(viewId).classList.remove('hidden');
+            document.querySelectorAll('.nav-btns button').forEach(b => b.classList.remove('active'));
+            const navBtn = document.getElementById('nav-' + viewId.split('-')[0]); if(navBtn) navBtn.classList.add('active');
+            if(viewId === 'dash-view') renderDashboard(); if(viewId === 'rep-view') renderReports(); if(viewId === 'set-view') loadSettings(); if(viewId === 'pos-view') renderPosCustomers();
+        }
+
+        function toggleTheme() { const t = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light'; document.documentElement.setAttribute('data-theme', t); localStorage.setItem('theme', t); document.getElementById('theme-btn').innerText = t === 'light' ? '🌙' : '☀️'; }
+        const savedTheme = localStorage.getItem('theme') || 'dark'; document.documentElement.setAttribute('data-theme', savedTheme);
+
+        function updateNetworkStatus() { const d = document.getElementById('net-dot'); const t = document.getElementById('net-text'); if (navigator.onLine) { d.className = 'status-dot dot-online'; t.innerText = 'متصل'; } else { d.className = 'status-dot dot-offline'; t.innerText = 'غير متصل'; } }
+        window.addEventListener('online', () => { updateNetworkStatus(); processSyncQueue(); }); window.addEventListener('offline', updateNetworkStatus); setInterval(processSyncQueue, 10000);
+
+        let cart = [];
+        async function liveSearch() {
+            const q = document.getElementById('search-input').value.toLowerCase().trim(); const dd = document.getElementById('search-dropdown');
+            if (q.length < 1) { dd.classList.add('hidden'); return; }
+            let prods = await db.products.where('pharmacy_id').equals(currentPharmacyId).and(p => p.name.toLowerCase().includes(q) || p.barcode === q).toArray();
+            if (prods.length === 0) { dd.innerHTML = '<div class="search-item">لا توجد نتائج</div>'; dd.classList.remove('hidden'); return; }
+            let batchIds = prods.map(p => p.id); let batcs = await db.batches.where('product_id').anyOf(batchIds).toArray(); batcs.sort((a, b) => a.expiry_date - b.expiry_date);
+            const pMap = {}; prods.forEach(p => pMap[p.id] = p);
+            dd.innerHTML = batcs.map(b => {
+                const p = pMap[b.product_id]; const isOut = b.quantity === 0; const exp = new Date(b.expiry_date).toISOString().split('T')[0].slice(0,7);
+                return `<div class="search-item ${isOut ? 'opacity-50' : ''}" onclick="${isOut ? '' : `selectSearchItem('${b.id}')`}"><div><div>${p.name}</div><div style="font-size:12px; color:var(--muted-dark); margin-top:4px;">دفعة: ${b.batch_number} • متوفر: ${b.quantity}</div></div><div style="color:var(--primary); font-weight:700;">${b.sell_price} ${settings.currency}</div></div>`;
+            }).join(''); dd.classList.remove('hidden');
+        }
+        async function selectSearchItem(batchId) { const b = await db.batches.get(batchId); const p = await db.products.get(b.product_id); addToCart(p, b); document.getElementById('search-input').value = ''; document.getElementById('search-dropdown').classList.add('hidden'); }
+        function addToCart(product, batch) {
+            const ex = cart.find(i => i.batch_id === batch.id);
+            if (ex) { if (ex.qty >= batch.quantity) return showToast('الكمية غير متوفرة', 'error'); ex.qty++; ex.total = ex.qty * ex.price; }
+            else { cart.push({ batch_id: batch.id, product_name: product.name, cost: batch.cost_price, batch_number: batch.batch_number, expiry: new Date(batch.expiry_date).toISOString().split('T')[0].slice(0,7), price: batch.sell_price, qty: 1, total: batch.sell_price }); }
+            renderCart();
+        }
+        function renderCart() {
+            const area = document.getElementById('cart-area');
+            area.innerHTML = cart.length === 0 ? '<p style="text-align: center; color: var(--muted-dark); margin-top: 50px;">السلة فارغة</p>' : cart.map(i => `<div class="cart-item"><div class="item-info"><h3>${i.product_name}</h3><p>دفعة: ${i.batch_number}</p></div><div style="display:flex; align-items:center; gap:12px;"><div class="qty-control"><button onclick="changeQty('${i.batch_id}', -1)">-</button><span>${i.qty}</span><button onclick="changeQty('${i.batch_id}', 1)">+</button></div><div style="color:var(--primary); font-weight:700;">${i.total.toFixed(2)}</div></div></div>`).join('');
+            document.getElementById('grand-total').innerText = cart.reduce((s, i) => s + i.total, 0).toFixed(2);
+        }
+        async function changeQty(bId, d) { const i = cart.find(x => x.batch_id === bId); if(!i) return; const b = await db.batches.get(bId); if(d>0 && i.qty >= b.quantity) return; i.qty += d; if(i.qty<=0) cart = cart.filter(x => x.batch_id !== bId); else i.total = i.qty * i.price; renderCart(); }
+
+        async function checkout(print = false) {
+            if (cart.length === 0) return; const invId = 'INV_' + Date.now(); const total = cart.reduce((s, i) => s + i.total, 0);
+            await db.invoices.add({ id: invId, pharmacy_id: currentPharmacyId, invoice_number: invId, total, user_id: currentUser.id, cashier_name: currentUser.name, created_at: Date.now(), is_voided: 0, items_json: JSON.stringify(cart), payment_type: document.getElementById('pos-payment').value });
+            for (const i of cart) await db.batches.where('id').equals(i.batch_id).modify(b => b.quantity -= i.qty);
+            await db.sync_queue.add({ pharmacy_id: currentPharmacyId, entity_type: 'invoice', entity_id: invId, action: 'create', status: 'pending', payload: { invId, total, cart, pharmacy_id: currentPharmacyId } });
+            lastInvoiceId = invId; if (print) printReceipt(invId, cart, total, currentUser.name); cart = []; renderCart(); renderAll(); showToast('تم البيع', 'success');
+        }
+        function printReceipt(invNum, items, total, cashier) {
+            const html = `<html dir="rtl"><head><title>إيصال</title><style>body{font-family:monospace;width:80mm;margin:0;padding:5mm;font-size:12px}.item{display:flex;justify-content:space-between;margin:4px 0}.total{border-top:2px dashed #000;margin-top:5px;padding-top:5px;font-weight:bold}</style></head><body><h1 style="text-align:center">${settings.name}</h1><p style="text-align:center">${settings.address}</p><hr><p>${invNum}</p><hr>${items.map(i => `<div class="item"><span>${i.product_name} (${i.qty})</span><span>${i.total} ${settings.currency}</span></div>`).join('')}<div class="total"><span>الإجمالي</span><span>${total} ${settings.currency}</span></div></body></html>`;
+            const ifr = document.getElementById('print-iframe'); ifr.contentWindow.document.open(); ifr.contentWindow.document.write(html); ifr.contentWindow.document.close(); setTimeout(() => ifr.contentWindow.print(), 250);
+        }
+
+        async function addProduct() {
+            const name = document.getElementById('med-name').value; if(!name) return;
+            await db.products.add({ id: 'p_'+Date.now(), pharmacy_id: currentPharmacyId, name, barcode: document.getElementById('med-barcode').value, category: document.getElementById('med-category').value });
+            showToast('تمت الإضافة'); renderAll();
+        }
+        async function addBatch() {
+            const pId = document.getElementById('batch-product-id').value; const exp = document.getElementById('batch-expiry').value; if(!pId||!exp) return;
+            await db.batches.add({ id: 'b_'+Date.now(), pharmacy_id: currentPharmacyId, product_id: pId, batch_number: document.getElementById('batch-number').value, expiry_date: new Date(exp).getTime(), quantity: Number(document.getElementById('batch-qty').value), sell_price: Number(document.getElementById('batch-price').value), cost_price: Number(document.getElementById('batch-cost').value) });
+            showToast('تمت إضافة الدفعة'); renderAll();
+        }
+        async function renderInventory() {
+            const batcs = await db.batches.where('pharmacy_id').equals(currentPharmacyId).toArray(); const prods = await db.products.where('pharmacy_id').equals(currentPharmacyId).toArray(); const pMap = {}; prods.forEach(p => pMap[p.id] = p);
+            document.getElementById('inv-body').innerHTML = batcs.map(b => {
+                let badge = `<span class="badge badge-ok">متوفر</span>`; if (b.quantity === 0) badge = `<span class="badge badge-danger">نفد</span>`;
+                return `<tr><td>${pMap[b.product_id]?.name}</td><td>${pMap[b.product_id]?.category}</td><td>${b.batch_number}</td><td>${new Date(b.expiry_date).toISOString().split('T')[0].slice(0,7)}</td><td>${b.quantity}</td><td>${b.sell_price}</td><td>${badge}</td><td><button class="btn-pill" onclick="adjustQty('${b.id}')">تسوية</button></td></tr>`;
+            }).join('');
+        }
+        async function adjustQty(bId) { const b = await db.batches.get(bId); const n = prompt(`الكمية الحالية: ${b.quantity}`, b.quantity); if (n !== null && !isNaN(n)) { await db.batches.update(bId, { quantity: Number(n) }); renderInventory(); renderDashboard(); } }
+        async function renderProductsDropdown() { const p = await db.products.where('pharmacy_id').equals(currentPharmacyId).toArray(); document.getElementById('batch-product-id').innerHTML = p.map(x => `<option value="${x.id}">${x.name}</option>`).join(''); }
+
+        async function addCustomer() { const n = document.getElementById('cust-name').value; if(!n) return; await db.customers.add({ id: 'c_'+Date.now(), pharmacy_id: currentPharmacyId, name: n, phone: document.getElementById('cust-phone').value, debt: 0 }); renderCustomers(); renderPosCustomers(); }
+        async function renderCustomers() { const c = await db.customers.where('pharmacy_id').equals(currentPharmacyId).toArray(); document.getElementById('cust-body').innerHTML = c.map(x => `<tr><td>${x.name}</td><td>${x.phone}</td><td>${x.debt}</td><td><button class="btn-info" onclick="payDebt('${x.id}')">سداد</button></td></tr>`).join(''); }
+        async function renderPosCustomers() { const c = await db.customers.where('pharmacy_id').equals(currentPharmacyId).toArray(); document.getElementById('pos-customer').innerHTML = `<option value="walk_in">زبون عادي</option>` + c.map(x => `<option value="${x.id}">${x.name}</option>`).join(''); }
+        async function payDebt(id) { await db.customers.update(id, { debt: 0 }); renderCustomers(); renderPosCustomers(); }
+
+        async function renderDashboard() {
+            const ts = new Date(); ts.setHours(0,0,0,0); const invs = await db.invoices.where('pharmacy_id').equals(currentPharmacyId).and(i => i.created_at > ts.getTime() && !i.is_voided).toArray();
+            document.getElementById('stat-sales').innerText = invs.reduce((s,i)=>s+i.total,0).toFixed(2);
+            document.getElementById('stat-invoices').innerText = invs.length;
+            const batcs = await db.batches.where('pharmacy_id').equals(currentPharmacyId).toArray();
+            document.getElementById('stat-low-stock').innerText = batcs.filter(b => b.quantity < 10).length;
+            const tml = new Date().setMonth(new Date().getMonth() + 3);
+            document.getElementById('stat-expiring').innerText = batcs.filter(b => b.expiry_date < tml).length;
+        }
+
+        async function renderReports() {
+            const ts = new Date(); ts.setHours(0,0,0,0); const invs = await db.invoices.where('pharmacy_id').equals(currentPharmacyId).and(i => i.created_at > ts.getTime() && !i.is_voided).toArray();
+            document.getElementById('rep-cash').innerText = invs.filter(i=>i.payment_type==='cash').reduce((s,i)=>s+i.total,0).toFixed(2);
+            document.getElementById('rep-debts').innerText = invs.filter(i=>i.payment_type==='debt').reduce((s,i)=>s+i.total,0).toFixed(2);
+            let p = 0; invs.forEach(i => JSON.parse(i.items_json).forEach(it => p += (it.price - it.cost) * it.qty)); document.getElementById('rep-profit').innerText = p.toFixed(2);
+            document.getElementById('rep-invoices-body').innerHTML = invs.reverse().map(i => `<tr><td>${i.invoice_number}</td><td>${new Date(i.created_at).toLocaleTimeString()}</td><td>${i.cashier_name}</td><td>${i.payment_type}</td><td>${i.total}</td></tr>`).join('');
+        }
+        function printEOD() { showToast('تم إغلاق اليوم'); }
+
+        async function loadSettings() { const s = await db.settings.where('pharmacy_id').equals(currentPharmacyId).first(); if(!s) return; document.getElementById('set-name').value = s.name; document.getElementById('set-phone').value = s.phone; document.getElementById('set-address').value = s.address; document.getElementById('set-currency').value = s.currency; renderEmployees(); }
+        async function saveSettings() { const data = { pharmacy_id: currentPharmacyId, name: document.getElementById('set-name').value, phone: document.getElementById('set-phone').value, address: document.getElementById('set-address').value, currency: document.getElementById('set-currency').value }; await db.settings.put(data); settings = data; showToast('تم الحفظ'); renderAll(); }
+
+        async function addEmployee() {
+            const name = document.getElementById('emp-name').value; const p = document.getElementById('emp-pin').value;
+            if(!name || p.length !== 4) return showToast('أدخل الاسم ورقم سري من 4 أرقام', 'error');
+            await db.users.add({ id: 'u_'+Date.now(), pharmacy_id: currentPharmacyId, name, role: document.getElementById('emp-role').value, pin: p });
+            await db.sync_queue.add({ pharmacy_id: currentPharmacyId, entity_type: 'user', entity_id: 'u_'+Date.now(), action: 'create_user', status: 'pending', payload: { name, role: document.getElementById('emp-role').value, pin: p, pharmacy_id: currentPharmacyId } });
+            showToast('تمت إضافة الموظف'); renderEmployees();
+            document.getElementById('emp-name').value = ''; document.getElementById('emp-pin').value = '';
+        }
+        async function renderEmployees() {
+            const emps = await db.users.where('pharmacy_id').equals(currentPharmacyId).toArray();
+            document.getElementById('emp-body').innerHTML = emps.map(e => `
+                <tr><td>${e.name}</td><td>${e.role === 'owner' ? 'مالك' : e.role === 'pharmacist' ? 'صيدلي' : 'كاشير'}</td>
+                <td><input type="number" value="${e.pin}" style="width:80px; padding:5px;" onchange="updatePin('${e.id}', this.value)"></td>
+                <td>${e.role !== 'owner' ? `<button class="btn-danger" onclick="deleteEmp('${e.id}')">حذف</button>` : '-'}</td></tr>`).join('');
+        }
+        async function updatePin(id, newPin) { 
+            if(newPin.length === 4) { 
+                await db.users.update(id, { pin: newPin }); 
+                await db.sync_queue.add({ pharmacy_id: currentPharmacyId, entity_type: 'user', entity_id: id, action: 'update_pin', status: 'pending', payload: { user_id: id, new_pin: newPin, pharmacy_id: currentPharmacyId } });
+                processSyncQueue(); showToast('تم تحديث الرمز السري ومزامنته', 'success'); 
+            } else { showToast('الرمز يجب أن يكون 4 أرقام', 'error'); }
+        }
+        async function deleteEmp(id) { await db.users.delete(id); renderEmployees(); }
+
+        const WORKER_URL = 'https://pharma-sync-api.yahyakmail59.workers.dev';
+        async function processSyncQueue() {
+            if (!navigator.onLine) return;
+            const pending = await db.sync_queue.where('pharmacy_id').equals(currentPharmacyId).and(q => q.status === 'pending').toArray();
+            if (pending.length > 0) {
+                try {
+                    const res = await fetch(WORKER_URL + '/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ actions: pending }) });
+                    if (res.ok) { for (const a of pending) { await db.sync_queue.update(a.id, { status: 'synced' }); } }
+                } catch (e) {}
+            }
+            try {
+                const ls = Number(localStorage.getItem('last_pull_'+currentPharmacyId)) || 0;
+                const res = await fetch(`${WORKER_URL}/api/get-updates?pharmacy_id=${currentPharmacyId}&last_sync=${ls}`);
+                const data = await res.json(); if(data.batches && data.batches.length > 0) { for (const b of data.batches) { await db.batches.put(b); } renderInventory(); renderDashboard(); }
+                localStorage.setItem('last_pull_'+currentPharmacyId, data.server_time);
+            } catch(e) {}
+        }
+
+        async function renderAll() { renderDashboard(); renderInventory(); renderProductsDropdown(); renderCustomers(); renderPosCustomers(); }
+        updateNetworkStatus();
+    </script>
+</body>
+</html>

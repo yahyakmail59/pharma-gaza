@@ -1,0 +1,33 @@
+# ============================================================
+# رؤوس أمان Netlify — تُقرأ تلقائياً عند رفع المجلد
+# ------------------------------------------------------------
+# مهم: استبدل رابط الـ Worker في connect-src برابطك الحقيقي،
+# وإلا ستُحجب المزامنة.
+# ============================================================
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://pharma-sync-api.yahyakmail59.workers.dev; media-src 'self' blob:; frame-src 'self' blob:; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(self), microphone=(), geolocation=(), payment=(), usb=()
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Cross-Origin-Opener-Policy: same-origin
+
+# لوحة المدير: منع الفهرسة نهائياً
+/admin.html
+  X-Robots-Tag: noindex, nofollow, noarchive
+
+# الـ Service Worker يجب ألا يُخزَّن طويلاً وإلا لن تصل التحديثات
+/sw.js
+  Cache-Control: no-cache
+
+/index.html
+  Cache-Control: no-cache
+
+/admin.html
+  Cache-Control: no-cache
+
+# المكتبات ثابتة الإصدار — تخزين طويل آمن
+/vendor/*
+  Cache-Control: public, max-age=31536000, immutable

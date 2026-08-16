@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="PharmaGaza">
+  <rect width="512" height="512" rx="112" fill="#050508"/>
+  <circle cx="256" cy="256" r="150" fill="none" stroke="#00E5A8" stroke-width="18" opacity="0.35"/>
+  <g fill="#00E5A8">
+    <rect x="226" y="146" width="60" height="220" rx="30"/>
+    <rect x="146" y="226" width="220" height="60" rx="30"/>
+  </g>
+</svg>

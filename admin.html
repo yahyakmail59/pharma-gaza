@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#050508">
+  <meta name="robots" content="noindex, nofollow">
+  <title>لوحة إدارة المنصة — PharmaGaza</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="app.css">
+  <script src="admin.js" defer></script>
+  <style>
+    .admin-wrap { max-width: 1000px; margin: 0 auto; padding: 24px 16px 60px; }
+    .admin-wrap h1 { color: var(--primary); text-align: center; margin-block: 20px 26px; font-size: 24px; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .actions button { padding: 7px 13px; font-size: 12.5px; }
+  </style>
+</head>
+<body>
+
+<div id="toast-container" role="status" aria-live="polite"></div>
+
+<!-- ==================== بوابة الدخول ==================== -->
+<div id="gate">
+  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;">
+    <div class="login-card">
+      <h1 style="font-size:20px;">لوحة إدارة المنصة</h1>
+      <p class="sub">الدخول مقصور على مزوّد الخدمة</p>
+      <div style="margin-block-end:14px;">
+        <label for="admin-pass">كلمة المرور</label>
+        <input type="password" id="admin-pass" autocomplete="current-password" placeholder="••••••••">
+      </div>
+      <button type="button" class="btn-primary" id="admin-login-btn" style="width:100%;">دخول</button>
+      <p style="color:var(--muted-dark);font-size:12px;margin-block-start:16px;line-height:1.7;">
+        يتم التحقق على السيرفر. لا تُخزَّن أي كلمة مرور أو مفتاح في هذه الصفحة.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== اللوحة ==================== -->
+<div id="panel" class="hidden">
+  <div class="admin-wrap">
+
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+      <h1 style="margin:0;">إدارة منصة الصيدليات</h1>
+      <button type="button" class="btn-danger" id="admin-logout-btn">خروج</button>
+    </div>
+
+    <div class="form-card" style="margin-block-start:24px;">
+      <h3>➕ إنشاء صيدلية جديدة</h3>
+      <div class="form-grid">
+        <div><label for="p-id">رمز الصيدلية</label><input type="text" id="p-id" placeholder="PHM-001"></div>
+        <div><label for="p-name">اسم الصيدلية</label><input type="text" id="p-name" placeholder="صيدلية الشفاء"></div>
+        <div><label for="p-phone">الهاتف</label><input type="tel" id="p-phone" placeholder="059..."></div>
+        <div><label for="p-address">العنوان</label><input type="text" id="p-address" placeholder="غزة"></div>
+        <div><label for="p-currency">العملة</label><input type="text" id="p-currency" value="₪" maxlength="4"></div>
+        <div><label for="p-pin">الرقم السري للمالك</label><input type="password" id="p-pin" inputmode="numeric" placeholder="٤ إلى ٦ أرقام"></div>
+      </div>
+      <p style="color:var(--muted-dark);font-size:12.5px;margin-block-start:12px;">
+        الرمز بحروف إنجليزية وأرقام وشرطات فقط. يُرسل الرقم السري للسيرفر ليُجزَّأ فوراً ولا يُخزَّن كنص.
+      </p>
+      <button type="button" class="btn-primary" id="create-btn" style="margin-block-start:14px;">إنشاء الصيدلية</button>
+    </div>
+
+    <div class="form-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+        <h3 style="margin:0;">📋 الصيدليات المشتركة</h3>
+        <button type="button" class="btn-ghost" id="refresh-btn">تحديث</button>
+      </div>
+      <div id="list-wrap">
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr><th>الرمز</th><th>الاسم</th><th>الهاتف</th><th>المستخدمون</th><th>الحالة</th><th>إجراءات</th></tr>
+            </thead>
+            <tbody id="pharmacies-list"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>

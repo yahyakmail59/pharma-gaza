@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <!-- أُزيل user-scalable=no و maximum-scale: كانا يمنعان التكبير (مخالفة WCAG 1.4.4) -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#050508">
+  <meta name="description" content="نظام إدارة صيدليات يعمل بدون إنترنت مع مزامنة سحابية">
+  <title>PharmaGaza — نظام إدارة الصيدليات</title>
+
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="app.css">
+
+  <!-- المكتبات مستضافة محلياً: التطبيق يعمل بلا إنترنت، ولا اعتماد على CDN خارجي -->
+  <script src="vendor/dexie.min.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+
+<div id="toast-container" role="status" aria-live="polite"></div>
+<iframe id="print-frame" title="طباعة" aria-hidden="true"></iframe>
+
+<!-- ==================== شاشة الدخول ==================== -->
+<div id="login-view">
+  <div class="login-card">
+    <h1>PharmaGaza</h1>
+    <p class="sub">نظام إدارة الصيدليات</p>
+
+    <p id="lock-note" class="readonly-banner hidden">الشاشة مقفلة — أدخل رقمك السري للمتابعة</p>
+
+    <div id="pharmacy-id-wrap">
+      <label for="pharmacy-id-input">رمز الصيدلية</label>
+      <input type="text" id="pharmacy-id-input" placeholder="PHM-001"
+             autocomplete="off" autocapitalize="characters" spellcheck="false"
+             style="text-align:center; font-size:18px;">
+    </div>
+
+    <div class="pin-dots" aria-label="الرقم السري">
+      <span id="d1"></span><span id="d2"></span><span id="d3"></span>
+      <span id="d4"></span><span id="d5"></span><span id="d6"></span>
+    </div>
+
+    <div class="pin-pad">
+      <button type="button" data-pin="1">1</button>
+      <button type="button" data-pin="2">2</button>
+      <button type="button" data-pin="3">3</button>
+      <button type="button" data-pin="4">4</button>
+      <button type="button" data-pin="5">5</button>
+      <button type="button" data-pin="6">6</button>
+      <button type="button" data-pin="7">7</button>
+      <button type="button" data-pin="8">8</button>
+      <button type="button" data-pin="9">9</button>
+      <button type="button" class="danger-btn" id="pin-clear">مسح</button>
+      <button type="button" data-pin="0">0</button>
+      <button type="button" class="action-btn" id="login-btn">دخول</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== التطبيق ==================== -->
+<div id="app-view" class="hidden">
+
+  <header class="header">
+    <nav class="nav-btns" id="nav-container" aria-label="التنقل"></nav>
+    <div class="status-bar">
+      <span style="display:flex;align-items:center;gap:7px;">
+        <span class="status-dot dot-online" id="net-dot"></span>
+        <span id="net-text">متصل</span>
+      </span>
+      <button type="button" id="theme-btn" class="icon-btn" aria-label="تبديل المظهر">☀️</button>
+      <button type="button" id="logout-btn" class="btn-danger">خروج</button>
+    </div>
+  </header>
+
+  <main class="content-area">
+
+    <!-- ---------- لوحة التحكم ---------- -->
+    <section id="dash-view">
+      <h2 class="section-title">لوحة التحكم</h2>
+      <div class="dash-grid">
+        <div class="dash-card">
+          <div class="icon">💰</div>
+          <div class="value" id="stat-sales" style="color:var(--primary)">0.00</div>
+          <div class="title">مبيعات اليوم</div>
+        </div>
+        <div class="dash-card">
+          <div class="icon">🧾</div>
+          <div class="value" id="stat-invoices" style="color:var(--info)">0</div>
+          <div class="title">عدد الفواتير</div>
+        </div>
+        <div class="dash-card">
+          <div class="icon">⚠️</div>
+          <div class="value" id="stat-low-stock" style="color:var(--warning)">0</div>
+          <div class="title">أصناف تحتاج شراء</div>
+        </div>
+        <div class="dash-card">
+          <div class="icon">⏳</div>
+          <div class="value" id="stat-expiring" style="color:var(--danger)">0</div>
+          <div class="title">قاربت على الانتهاء</div>
+        </div>
+      </div>
+      <h3 class="section-title" style="font-size:17px;">التنبيهات الحرجة</h3>
+      <div id="alerts-container"></div>
+    </section>
+
+    <!-- ---------- الكاشير ---------- -->
+    <section id="pos-view" class="hidden">
+      <div class="pos-container">
+        <div class="pos-left">
+          <div class="search-wrapper">
+            <input type="text" id="search-input" autocomplete="off"
+                   placeholder="ابحث بالاسم أو امسح الباركود ثم اضغط Enter">
+            <button type="button" class="btn-scan" id="btn-scan-pos" aria-label="مسح الباركود">📷</button>
+            <div id="search-dropdown" class="search-dropdown hidden" role="listbox"></div>
+          </div>
+          <div class="cart-area" id="cart-area"></div>
+        </div>
+
+        <aside class="pos-right">
+          <div>
+            <h2 style="color:var(--muted);font-size:15px;margin-block-end:14px;">ملخص الفاتورة</h2>
+            <div class="form-grid" style="margin-block-end:14px;">
+              <div>
+                <label for="pos-customer">الزبون</label>
+                <select id="pos-customer" style="padding:10px;font-size:14px;">
+                  <option value="walk_in">زبون عادي (كاشير)</option>
+                </select>
+              </div>
+              <div>
+                <label for="pos-payment">طريقة الدفع</label>
+                <select id="pos-payment" style="padding:10px;font-size:14px;">
+                  <option value="cash">نقدي</option>
+                  <option value="debt">آجل (دين)</option>
+                </select>
+              </div>
+            </div>
+            <div class="summary-total" id="grand-total">0.00</div>
+            <p style="text-align:center;color:var(--muted-dark);font-size:14px;" id="currency-label">₪</p>
+          </div>
+          <div>
+            <button type="button" class="btn-sell" id="btn-checkout">إتمام البيع <small style="opacity:.7">(F2)</small></button>
+            <button type="button" class="btn-sell-print" id="btn-checkout-print">بيع وطباعة <small style="opacity:.7">(F9)</small></button>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ---------- المخزون ---------- -->
+    <section id="inv-view" class="hidden">
+      <h2 class="section-title">إدارة المخزون</h2>
+
+      <div class="form-card">
+        <h3>إضافة صنف جديد للكتالوج</h3>
+        <div class="form-grid">
+          <div><label for="med-name">اسم الدواء</label><input type="text" id="med-name" placeholder="باراسيتامول"></div>
+          <div><label for="med-category">الفئة</label><input type="text" id="med-category" placeholder="مسكنات"></div>
+          <div>
+            <label for="med-barcode">الباركود</label>
+            <div style="display:flex;gap:8px;">
+              <input type="text" id="med-barcode" placeholder="اختياري">
+              <button type="button" class="btn-scan" id="btn-scan-inv" aria-label="مسح الباركود">📷</button>
+            </div>
+          </div>
+        </div>
+        <button type="button" class="btn-primary" id="btn-add-product" style="margin-block-start:16px;">+ إضافة الصنف</button>
+      </div>
+
+      <div class="form-card">
+        <h3>إضافة دفعة لصنف موجود</h3>
+        <div class="form-grid">
+          <div><label for="batch-product-id">الدواء</label><select id="batch-product-id"></select></div>
+          <div><label for="batch-number">رقم الدفعة</label><input type="text" id="batch-number" placeholder="B1"></div>
+          <div><label for="batch-expiry">الصلاحية (شهر/سنة)</label><input type="month" id="batch-expiry"></div>
+          <div><label for="batch-qty">الكمية</label><input type="number" id="batch-qty" min="1" placeholder="0"></div>
+          <div><label for="batch-cost">سعر التكلفة</label><input type="text" id="batch-cost" inputmode="decimal" placeholder="0.00"></div>
+          <div><label for="batch-price">سعر البيع</label><input type="text" id="batch-price" inputmode="decimal" placeholder="0.00"></div>
+        </div>
+        <button type="button" class="btn-primary" id="btn-add-batch" style="margin-block-start:16px;">+ إضافة الدفعة</button>
+      </div>
+
+      <input type="search" id="inv-search" placeholder="ابحث في المخزون بالاسم أو الباركود أو رقم الدفعة">
+
+      <div id="inv-wrap">
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr><th>الدواء</th><th>الفئة</th><th>الدفعة</th><th>الصلاحية</th>
+                  <th>الكمية</th><th>السعر</th><th>الحالة</th><th>إجراء</th></tr>
+            </thead>
+            <tbody id="inv-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- الزبائن ---------- -->
+    <section id="cust-view" class="hidden">
+      <h2 class="section-title">الزبائن والديون</h2>
+      <div class="form-card">
+        <div class="form-grid">
+          <div><label for="cust-name">اسم الزبون</label><input type="text" id="cust-name" placeholder="محمد أحمد"></div>
+          <div><label for="cust-phone">رقم الهاتف</label><input type="tel" id="cust-phone" placeholder="059..."></div>
+        </div>
+        <button type="button" class="btn-primary" id="btn-add-customer" style="margin-block-start:16px;">+ إضافة الزبون</button>
+      </div>
+      <div id="cust-wrap">
+        <div class="table-container">
+          <table>
+            <thead><tr><th>الاسم</th><th>الهاتف</th><th>الدين المستحق</th><th>إجراء</th></tr></thead>
+            <tbody id="cust-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- التقارير ---------- -->
+    <section id="rep-view" class="hidden">
+      <h2 class="section-title">التقارير وإغلاق اليوم</h2>
+      <div class="dash-grid">
+        <div class="dash-card">
+          <div class="icon">💵</div>
+          <div class="value" id="rep-cash" style="color:var(--primary)">0.00</div>
+          <div class="title">مبيعات نقدية اليوم</div>
+        </div>
+        <div class="dash-card">
+          <div class="icon">📉</div>
+          <div class="value" id="rep-debts" style="color:var(--danger)">0.00</div>
+          <div class="title">مبيعات آجلة اليوم</div>
+        </div>
+        <div class="dash-card">
+          <div class="icon">📊</div>
+          <div class="value" id="rep-profit" style="color:var(--info)">0.00</div>
+          <div class="title">الربح التقديري</div>
+        </div>
+      </div>
+
+      <div class="form-card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;">
+        <div>
+          <h3 style="margin:0;">تقرير إغلاق اليوم (Z-Report)</h3>
+          <p style="color:var(--muted-dark);font-size:13px;margin-block-start:5px;">
+            يطبع ملخص المبيعات والتحصيل والنقدي المتوقع بالصندوق.
+          </p>
+        </div>
+        <button type="button" class="btn-primary" id="btn-eod">طباعة تقرير الإغلاق</button>
+      </div>
+
+      <div id="rep-wrap">
+        <div class="table-container">
+          <table>
+            <thead><tr><th>الفاتورة</th><th>الوقت</th><th>البائع</th><th>الدفع</th><th>الإجمالي</th><th>إجراء</th></tr></thead>
+            <tbody id="rep-invoices-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- الإعدادات ---------- -->
+    <section id="set-view" class="hidden">
+      <h2 class="section-title">الإعدادات</h2>
+
+      <div class="form-card">
+        <h3>بيانات الصيدلية</h3>
+        <div class="form-grid">
+          <div><label for="set-name">اسم الصيدلية</label><input type="text" id="set-name" placeholder="صيدلية الشفاء"></div>
+          <div><label for="set-phone">الهاتف</label><input type="tel" id="set-phone" placeholder="059..."></div>
+          <div><label for="set-address">العنوان</label><input type="text" id="set-address" placeholder="غزة — شارع"></div>
+          <div><label for="set-currency">رمز العملة</label><input type="text" id="set-currency" value="₪" maxlength="4"></div>
+        </div>
+        <button type="button" class="btn-primary" id="btn-save-settings" style="margin-block-start:16px;">حفظ الإعدادات</button>
+      </div>
+
+      <div class="form-card">
+        <h3>النسخ الاحتياطي</h3>
+        <p style="color:var(--muted-dark);font-size:13.5px;line-height:1.8;margin-block-end:14px;">
+          تُنشأ نسخة مشفّرة بكلمة مرور تختارها. احفظها في Google Drive أو ذاكرة خارجية.
+          النسخة لا تحتوي على أي أرقام سرية. بدون كلمة المرور لا يمكن فتحها.
+        </p>
+        <p id="backup-status" style="color:var(--muted);font-size:13px;margin-block-end:14px;">—</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button type="button" class="btn-primary" id="btn-backup-export">⬇ إنشاء نسخة احتياطية</button>
+          <button type="button" class="btn-ghost" id="btn-backup-import">⬆ استعادة من ملف</button>
+          <input type="file" id="backup-file" accept="application/json,.json" class="hidden">
+        </div>
+      </div>
+
+      <div class="form-card">
+        <h3>الموظفون</h3>
+        <div class="form-grid">
+          <div><label for="emp-name">اسم الموظف</label><input type="text" id="emp-name" placeholder="محمد"></div>
+          <div>
+            <label for="emp-role">الصلاحية</label>
+            <select id="emp-role">
+              <option value="cashier">كاشير</option>
+              <option value="pharmacist">صيدلي</option>
+            </select>
+          </div>
+          <div><label for="emp-pin">الرقم السري</label><input type="password" id="emp-pin" inputmode="numeric" placeholder="٤ إلى ٦ أرقام"></div>
+        </div>
+        <button type="button" class="btn-primary" id="btn-add-employee" style="margin-block-start:16px;">+ إضافة موظف</button>
+
+        <div class="table-container" style="margin-block-start:18px;">
+          <table>
+            <thead><tr><th>الاسم</th><th>الصلاحية</th><th>الرقم السري</th><th>إجراء</th></tr></thead>
+            <tbody id="emp-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <nav class="bottom-nav" id="bottom-nav" aria-label="التنقل السريع"></nav>
+</div>
+
+</body>
+</html>
