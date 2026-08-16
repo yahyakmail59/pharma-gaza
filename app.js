@@ -289,9 +289,28 @@ async function getLocalUsers(pharmacyId) {
     const m = { [legacy.id]: { ...legacy, len: null, at: Date.now() } };
     await meta.set('local_users_' + pharmacyId, m);
     await meta.set('local_user_' + pharmacyId, null);
+    // التوكن أيضاً: كان بمفتاح token_<صيدلية> وصار token_<صيدلية>_<مستخدم>.
+    // بدون نقله يُعتبر المستخدم بلا توكن فيسقط في وضع القراءة فقط.
+    const legacyTok = await meta.get('token_' + pharmacyId);
+    if (legacyTok && legacyTok.token) {
+      await meta.set(tokenKey(pharmacyId, legacy.id), legacyTok);
+      await meta.set('token_' + pharmacyId, null);
+    }
     return m;
   }
   return {};
+}
+
+/** هل لدى هذا المستخدم توكن سارٍ على هذا الجهاز؟ */
+async function hasValidToken(pharmacyId, userId) {
+  const t = await meta.get(tokenKey(pharmacyId, userId));
+  return !!(t && t.token && t.expires > Date.now());
+}
+
+/** رسالة تشرح سبب وضع القراءة بدل «وضع القراءة فقط» المبهمة. */
+function readOnlyReason() {
+  if (!navigator.onLine) return 'وضع القراءة فقط — انتهت صلاحية الجلسة. اتصل بالإنترنت وسجّل الدخول مجدداً.';
+  return 'وضع القراءة فقط — سجّل الخروج ثم الدخول لتجديد الجلسة.';
 }
 
 async function putLocalUser(pharmacyId, rec) {
@@ -328,6 +347,9 @@ async function tryLocalUnlock() {
   const u = await matchLocalUser(pharmacyId, pinBuffer, true);
   if (!u) return;                        // لا مطابقة: قد يكون الرقم أطول — لا تفعل شيئاً
   if (lockMode && State.user && u.id !== State.user.id) return;
+  // الرقم صحيح لكن التوكن منتهٍ ولدينا إنترنت: جدّده من السيرفر
+  // بدل الدخول لوضع القراءة فقط. المطابقة نجحت، فلن تُحرق محاولة فاشلة.
+  if (navigator.onLine && !(await hasValidToken(pharmacyId, u.id))) { attemptLogin(); return; }
   await finishLocalLogin(pharmacyId, u);
 }
 
@@ -363,8 +385,14 @@ async function attemptLogin() {
     const localMap = await getLocalUsers(pharmacyId);
     if (Object.keys(localMap).length) {
       const u = await matchLocalUser(pharmacyId, pin, false);   // اختبر الجميع
-      if (u) { await finishLocalLogin(pharmacyId, u); return; }
-      if (!navigator.onLine) {
+      if (u) {
+        // توكن سارٍ ⇒ دخول فوري. منتهٍ ونحن متصلون ⇒ نكمل للسيرفر لتجديده،
+        // وإلا لبقي المستخدم حبيس وضع القراءة بلا مخرج.
+        if (await hasValidToken(pharmacyId, u.id) || !navigator.onLine) {
+          await finishLocalLogin(pharmacyId, u);
+          return;
+        }
+      } else if (!navigator.onLine) {
         toast('الرقم السري غير صحيح', 'error');
         clearPin();
         btn.disabled = false;
@@ -1299,7 +1327,7 @@ async function renderInventory() {
 }
 
 async function adjustQty(batchId) {
-  if (State.readOnly) { toast('وضع القراءة فقط', 'error'); return; }
+  if (State.readOnly) { toast(readOnlyReason(), 'error'); return; }
   const b = await db.batches.get(batchId);
   if (!b) return;
 
@@ -1403,7 +1431,7 @@ async function handleExcelFile(evt) {
   const file = evt.target.files[0];
   evt.target.value = '';
   if (!file) return;
-  if (State.readOnly) { toast('وضع القراءة فقط', 'error'); return; }
+  if (State.readOnly) { toast(readOnlyReason(), 'error'); return; }
   if (!(await loadXlsx())) { toast('تعذّر تحميل مكتبة إكسل', 'error'); return; }
 
   let rows;
@@ -1615,7 +1643,7 @@ async function renderCustomers() {
 }
 
 async function payDebt(customerId) {
-  if (State.readOnly) { toast('وضع القراءة فقط', 'error'); return; }
+  if (State.readOnly) { toast(readOnlyReason(), 'error'); return; }
   const c = await db.customers.get(customerId);
   if (!c) return;
 
