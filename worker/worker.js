@@ -1184,6 +1184,24 @@ export default {
       if (url.pathname.startsWith("/api/admin/")) {
         if (!(await isAdmin(request, db))) return json({ error: "UNAUTHORIZED" }, 401, H);
 
+        /**
+         * الصيدلية التي أنشأتها لوحة أثر تُدار من أثر وحدها.
+         * الحذف من هنا كان يمحو الصف بينما تبقى أثر تظنها نشطة، فتفشل كل
+         * عملية لاحقة بـTENANT_NOT_FOUND بلا مخرج. لوحتان تحكمان البيانات
+         * نفسها تعنيان انحرافًا مؤكدًا لا احتمال انحراف.
+         */
+        const atharManaged = async (pharmacyId) => {
+          const row = await db
+            .prepare("SELECT control_tenant_id FROM pharmacies WHERE pharmacy_id = ?")
+            .bind(String(pharmacyId || ""))
+            .first();
+          return Boolean(row && String(row.control_tenant_id || ""));
+        };
+        const managedError = () => json({
+          error: "MANAGED_BY_ATHAR",
+          message: "هذه الصيدلية تُدار من لوحة أثر. نفّذ العملية من هناك.",
+        }, 409, H);
+
         if (url.pathname === "/api/admin/pharmacies" && request.method === "GET") {
           const rows = await db
             .prepare(
@@ -1223,6 +1241,8 @@ export default {
 
         if (url.pathname === "/api/admin/set-status" && request.method === "POST") {
           const { pharmacy_id, is_active } = await request.json();
+          // حالة الاشتراك يملكها سجل أثر التجاري؛ تغييرها هنا يجعل اللوحتين تتناقضان.
+          if (await atharManaged(pharmacy_id)) return managedError();
           await db
             .prepare("UPDATE pharmacies SET is_active = ?, updated_at = ? WHERE pharmacy_id = ?")
             .bind(is_active ? 1 : 0, Date.now(), pharmacy_id)
@@ -1251,6 +1271,7 @@ export default {
           const { pharmacy_id, confirm } = await request.json();
           // تأكيد مزدوج: يجب أن يطابق النص رمز الصيدلية حرفياً
           if (confirm !== pharmacy_id) return json({ error: "CONFIRM_MISMATCH" }, 400, H);
+          if (await atharManaged(pharmacy_id)) return managedError();
           const tables = ["users", "sessions", "products", "batches", "stock_moves", "customers",
                           "payments", "invoices", "audit_log", "settings"];
           await db.batch([
