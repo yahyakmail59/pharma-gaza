@@ -18,8 +18,8 @@ const TYPES = {
 http.createServer((req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
   if (p === '/') p = '/index.html';
-  const file = path.join(__dirname, path.normalize(p).replace(/^(\.\.[/\\])+/, ''));
-  if (!file.startsWith(__dirname)) { res.writeHead(403).end('forbidden'); return; }
+  const file = path.join(__dirname, 'public', path.normalize(p).replace(/^(\.\.[/\\])+/, ''));
+  if (!file.startsWith(path.join(__dirname, 'public'))) { res.writeHead(403).end('forbidden'); return; }
   fs.readFile(file, (err, buf) => {
     if (err) { res.writeHead(404, { 'Content-Type': 'text/plain' }).end('not found'); return; }
     res.writeHead(200, {

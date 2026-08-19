@@ -7,11 +7,19 @@
 -- ---------- الصيدليات (المستأجرون) ----------
 CREATE TABLE IF NOT EXISTS pharmacies (
   pharmacy_id TEXT PRIMARY KEY,
+  control_tenant_id TEXT,
   name        TEXT NOT NULL,
   phone       TEXT,
   address     TEXT,
   currency    TEXT NOT NULL DEFAULT '₪',
   is_active   INTEGER NOT NULL DEFAULT 1,
+  environment TEXT NOT NULL DEFAULT 'production'
+              CHECK (environment IN ('demo','production')),
+  plan_code TEXT NOT NULL DEFAULT '',
+  trial_expires_at TEXT,
+  lifecycle_status TEXT NOT NULL DEFAULT 'active'
+                   CHECK (lifecycle_status IN ('active','suspended','archived')),
+  provisioned_at INTEGER,
   created_at  INTEGER NOT NULL DEFAULT 0,
   updated_at  INTEGER NOT NULL DEFAULT 0
 );
@@ -56,6 +64,22 @@ CREATE TABLE IF NOT EXISTS login_attempts (
   locked_until INTEGER NOT NULL DEFAULT 0,
   updated_at   INTEGER NOT NULL DEFAULT 0
 );
+
+-- ---------- Athar Media product adapter idempotency ----------
+CREATE TABLE IF NOT EXISTS adapter_requests (
+  request_id     TEXT PRIMARY KEY,
+  action         TEXT NOT NULL,
+  tenant_id      TEXT NOT NULL,
+  request_hash   TEXT NOT NULL,
+  status         TEXT NOT NULL DEFAULT 'pending'
+                 CHECK (status IN ('pending', 'succeeded', 'failed')),
+  response_json  TEXT NOT NULL DEFAULT '{}',
+  error_code     TEXT NOT NULL DEFAULT '',
+  created_at     INTEGER NOT NULL,
+  completed_at   INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_adapter_requests_tenant
+  ON adapter_requests(tenant_id, created_at);
 
 -- ---------- الكتالوج ----------
 CREATE TABLE IF NOT EXISTS products (

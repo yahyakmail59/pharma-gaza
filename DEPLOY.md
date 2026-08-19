@@ -1,5 +1,23 @@
 # دليل الرفع — PharmaGaza SaaS
 
+> **الطريقة المعتمدة منذ 2026-08-20: النشر بأمر واحد من هذا المستودع.**
+>
+> ```bash
+> npx wrangler deploy --config wrangler.jsonc
+> ```
+>
+> الواجهة صارت داخل `public/` وتُخدم من نفس الـWorker، فلا حاجة إلى Netlify ولا إلى
+> النسخ واللصق في لوحة Cloudflare، ولا إلى فتح CORS لمصدر خارجي. المتغيران
+> `PUBLIC_APP_URL` و`ALLOWED_ORIGINS` مضبوطان في `wrangler.jsonc`، والأسرار
+> (`ADMIN_PASSWORD`, `ATHAR_ADAPTER_SECRET`) تُضبط بـ`wrangler secret put`.
+>
+> الترحيلات في `worker/migrations/` تُطبّق **قبل** نشر كود يعتمد عليها، وبعد أخذ
+> نسخة احتياطية بـ`wrangler d1 export`.
+>
+> ما تحت هذا السطر هو الطريقة اليدوية القديمة، محفوظة كمرجع تاريخي فقط.
+
+---
+
 اتبع الخطوات بالترتيب. مدة التنفيذ الأولى ٢٠–٣٠ دقيقة.
 
 ---
@@ -180,6 +198,32 @@ node dev-server.js
 - استيراد تلقائي وآمن لبيانات النسخة القديمة عند أول دخول.
 
 ---
+
+## ربط لوحة أثر (Product Adapter)
+
+أضيفت واجهة داخلية موقعة للوحة أثر في `worker/worker.js`، وتشمل:
+
+- `POST /internal/v1/tenants` لإنشاء صيدلية تجريبية أو حقيقية.
+- `POST /internal/v1/tenants/:tenantId/status` للإيقاف والاستئناف والأرشفة.
+- `GET /internal/v1/tenants/:tenantId/health` لفحص الحالة.
+
+قبل نشر الكود الجديد على قاعدة قائمة، طبّق `worker/migrations/0001_athar_adapter.sql` بعد أخذ نسخة احتياطية. هذا الترحيل يضيف ربط `control_tenant_id` وحالة دورة الحياة وجدول منع تكرار الطلبات، ولا يحذف بيانات الصيدليات الحالية.
+
+أضف الأسرار والمتغيرات التالية في إعداد Worker:
+
+- `ATHAR_ADAPTER_SECRET` كسر، ويجب أن يطابق السر في لوحة أثر.
+- `PUBLIC_APP_URL` كرابط واجهة الصيدلية العامة؛ يضاف إليه `?pharmacy=...` تلقائيًا.
+- أبقِ `ADMIN_PASSWORD` و`ALLOWED_ORIGINS` كما هما.
+
+لا تضع `ATHAR_ADAPTER_SECRET` داخل الكود أو `wrangler.jsonc`. انسخ `worker/.dev.vars.example` إلى `worker/.dev.vars` للتطوير المحلي فقط؛ الملف الفعلي مهمل من Git. عقد الربط المركزي موثق في `PRODUCT_ADAPTER_CONTRACT.md` داخل مساحة عمل أثر.
+
+اختبار التكامل المحلي:
+
+```powershell
+node worker/tests/adapter.integration.mjs
+```
+
+يتحقق الاختبار من إنشاء demo وproduction، البيانات التجريبية، تسجيل الدخول، منع تكرار الطلب، الإيقاف والاستئناف والأرشفة، وعزل بيانات صيدليتين.
 
 ## نقاط تستحق الانتباه
 

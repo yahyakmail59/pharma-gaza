@@ -77,6 +77,684 @@ function corsHeaders(request, env) {
 const json = (data, status, headers) =>
   new Response(JSON.stringify(data), { status, headers });
 
+/* ---------------- Athar Media product adapter ---------------- */
+
+const ADAPTER_MAX_BODY_BYTES = 64 * 1024;
+const ADAPTER_CLOCK_SKEW_SECONDS = 5 * 60;
+
+class AdapterHttpError extends Error {
+  constructor(status, code, message) {
+    super(message);
+    this.name = "AdapterHttpError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+const adapterHeaders = {
+  "Cache-Control": "no-store",
+  "Content-Type": "application/json; charset=utf-8",
+  "Referrer-Policy": "no-referrer",
+  "X-Content-Type-Options": "nosniff",
+};
+
+const adapterJson = (data, status = 200) => json(data, status, adapterHeaders);
+
+function bytesToHex(bytes) {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256HexBytes(bytes) {
+  return bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+}
+
+async function sha256HexText(text) {
+  return sha256HexBytes(enc(text));
+}
+
+async function hmacBytes(secret, text) {
+  const key = await crypto.subtle.importKey(
+    "raw", enc(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+  );
+  return new Uint8Array(await crypto.subtle.sign("HMAC", key, enc(text)));
+}
+
+async function hmacHex(secret, text) {
+  return bytesToHex(await hmacBytes(secret, text));
+}
+
+async function readBoundedBody(request) {
+  const declared = Number(request.headers.get("Content-Length") || 0);
+  if (declared > ADAPTER_MAX_BODY_BYTES) {
+    throw new AdapterHttpError(413, "BODY_TOO_LARGE", "Request body exceeds the adapter limit.");
+  }
+  if (!request.body) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > ADAPTER_MAX_BODY_BYTES) {
+      await reader.cancel("body too large");
+      throw new AdapterHttpError(413, "BODY_TOO_LARGE", "Request body exceeds the adapter limit.");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+async function verifyAdapterRequest(request, env) {
+  const secret = env.ATHAR_ADAPTER_SECRET;
+  if (!secret) throw new AdapterHttpError(500, "ADAPTER_NOT_CONFIGURED", "Product adapter is not configured.");
+
+  const timestamp = request.headers.get("X-Athar-Timestamp") || "";
+  const requestId = request.headers.get("X-Athar-Request-Id") || "";
+  const signature = (request.headers.get("X-Athar-Signature") || "").toLowerCase();
+  if (!/^\d{10}$/.test(timestamp) || !/^[0-9a-f-]{36}$/.test(requestId) || !/^[0-9a-f]{64}$/.test(signature)) {
+    throw new AdapterHttpError(401, "ADAPTER_UNAUTHORIZED", "Adapter authentication failed.");
+  }
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (Math.abs(nowSeconds - Number(timestamp)) > ADAPTER_CLOCK_SKEW_SECONDS) {
+    throw new AdapterHttpError(401, "ADAPTER_TIMESTAMP_EXPIRED", "Adapter request timestamp is outside the accepted window.");
+  }
+
+  const bodyBytes = await readBoundedBody(request);
+  const requestHash = await sha256HexBytes(bodyBytes);
+  const pathname = new URL(request.url).pathname;
+  const canonical = `${timestamp}\n${requestId}\n${request.method.toUpperCase()}\n${pathname}\n${requestHash}`;
+  if (!safeEqual(await hmacHex(secret, canonical), signature)) {
+    throw new AdapterHttpError(401, "ADAPTER_UNAUTHORIZED", "Adapter authentication failed.");
+  }
+
+  let body = {};
+  if (bodyBytes.byteLength) {
+    const contentType = request.headers.get("Content-Type") || "";
+    if (!contentType.toLowerCase().startsWith("application/json")) {
+      throw new AdapterHttpError(415, "JSON_REQUIRED", "Adapter requests must use JSON.");
+    }
+    try {
+      body = JSON.parse(new TextDecoder().decode(bodyBytes));
+    } catch {
+      throw new AdapterHttpError(400, "INVALID_JSON", "Adapter request JSON is invalid.");
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new AdapterHttpError(400, "INVALID_JSON", "Adapter request JSON must be an object.");
+    }
+    if (body.request_id !== requestId) {
+      throw new AdapterHttpError(400, "REQUEST_ID_MISMATCH", "Body and header request IDs must match.");
+    }
+  }
+  return { requestId, requestHash, body };
+}
+
+function adapterRequired(value, code, max = 160) {
+  const normalized = String(value || "").trim();
+  if (!normalized || normalized.length > max) {
+    throw new AdapterHttpError(422, code, "A required adapter field is invalid.");
+  }
+  return normalized;
+}
+
+async function beginAdapterRequest(db, requestId, action, tenantId, requestHash) {
+  const existing = await db.prepare(
+    "SELECT request_hash, status, response_json FROM adapter_requests WHERE request_id = ?"
+  ).bind(requestId).first();
+  if (existing) {
+    if (!safeEqual(String(existing.request_hash), requestHash)) {
+      throw new AdapterHttpError(409, "IDEMPOTENCY_CONFLICT", "This request ID was already used for different data.");
+    }
+    if (existing.status === "succeeded") {
+      return { replay: true, result: JSON.parse(existing.response_json || "{}") };
+    }
+    if (existing.status === "pending") {
+      throw new AdapterHttpError(409, "REQUEST_IN_PROGRESS", "This adapter request is already in progress.");
+    }
+    await db.prepare(
+      "UPDATE adapter_requests SET status = 'pending', error_code = '', completed_at = NULL WHERE request_id = ?"
+    ).bind(requestId).run();
+    return { replay: false };
+  }
+  const claimed = await db.prepare(
+    `INSERT OR IGNORE INTO adapter_requests
+     (request_id, action, tenant_id, request_hash, status, response_json, error_code, created_at)
+     VALUES (?, ?, ?, ?, 'pending', '{}', '', ?)`
+  ).bind(requestId, action, tenantId, requestHash, Date.now()).run();
+  if (Number(claimed.meta?.changes || 0) === 0) {
+    return beginAdapterRequest(db, requestId, action, tenantId, requestHash);
+  }
+  return { replay: false };
+}
+
+async function markAdapterFailed(db, requestId, code) {
+  await db.prepare(
+    "UPDATE adapter_requests SET status = 'failed', error_code = ?, completed_at = ? WHERE request_id = ?"
+  ).bind(code, Date.now(), requestId).run();
+}
+
+async function externalPharmacyId(slug, tenantId) {
+  const suffix = (await sha256HexText(tenantId)).slice(0, 8);
+  const safeSlug = slug.toLowerCase().replace(/[^a-z0-9_-]/g, "-").replace(/^-+|-+$/g, "").slice(0, 19) || "pharmacy";
+  return `ATH_${safeSlug}_${suffix}`.toUpperCase();
+}
+
+async function ownerPin(secret, requestId, tenantId) {
+  const bytes = await hmacBytes(secret, `credential\n${requestId}\n${tenantId}`);
+  const number = ((bytes[0] << 24) >>> 0) + (bytes[1] << 16) + (bytes[2] << 8) + bytes[3];
+  return String(100000 + (number % 900000));
+}
+
+function publicPharmacyUrl(env, pharmacyId) {
+  const base = String(env.PUBLIC_APP_URL || "").trim();
+  if (!base) return "";
+  try {
+    const url = new URL(base);
+    url.searchParams.set("pharmacy", pharmacyId);
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+// كتالوج العرض. الأعمدة: المفتاح، الاسم، التصنيف، سعر التكلفة، سعر البيع (بالأغورة)،
+// الكمية، عدد الأشهر حتى انتهاء الصلاحية. القيم السالبة تعني صنفًا منتهيًا فعلًا.
+// الهدف صيدلية تبدو حقيقية: أصناف تكفي للبحث، ونواقص وقرب انتهاء تُظهر قيمة التنبيهات.
+const DEMO_CATALOG = [
+  ["paracetamol", "باراسيتامول 500 مجم", "مسكنات وخافضات حرارة", 240, 350, 180, 26],
+  ["ibuprofen", "إيبوبروفين 400 مجم", "مسكنات وخافضات حرارة", 320, 500, 96, 19],
+  ["aspirin", "أسبرين 100 مجم", "مسكنات وخافضات حرارة", 190, 300, 64, 31],
+  ["diclofenac-gel", "جل ديكلوفيناك", "مسكنات وخافضات حرارة", 900, 1400, 22, 14],
+  ["amoxicillin", "أموكسيسيلين 500 مجم", "مضادات حيوية", 1100, 1650, 48, 11],
+  ["azithromycin", "أزيثرومايسين 250 مجم", "مضادات حيوية", 1800, 2600, 30, 16],
+  ["cefixime", "سيفيكسيم 400 مجم", "مضادات حيوية", 2200, 3200, 8, 5],
+  ["augmentin-syrup", "شراب أوجمنتين للأطفال", "مضادات حيوية", 2400, 3400, 14, 7],
+  ["vitamin-c", "فيتامين C 1000 مجم", "فيتامينات ومكملات", 500, 750, 88, 21],
+  ["vitamin-d", "فيتامين D3 5000 وحدة", "فيتامينات ومكملات", 1600, 2400, 41, 24],
+  ["iron-folic", "حديد + حمض فوليك", "فيتامينات ومكملات", 950, 1450, 36, 18],
+  ["calcium", "كالسيوم + ماغنيسيوم", "فيتامينات ومكملات", 1250, 1900, 27, 20],
+  ["omega3", "أوميغا 3 زيت سمك", "فيتامينات ومكملات", 2800, 4200, 19, 15],
+  ["metformin", "ميتفورمين 850 مجم", "أدوية مزمنة", 700, 1100, 72, 23],
+  ["amlodipine", "أملوديبين 5 مجم", "أدوية مزمنة", 620, 950, 58, 17],
+  ["atorvastatin", "أتورفاستاتين 20 مجم", "أدوية مزمنة", 1350, 2000, 44, 13],
+  ["insulin-pen", "قلم إنسولين", "أدوية مزمنة", 5400, 7500, 6, 4],
+  ["salbutamol", "بخاخ سالبوتامول", "أدوية تنفسية", 1900, 2800, 25, 12],
+  ["cough-syrup", "شراب مهدئ للسعال", "أدوية تنفسية", 850, 1300, 33, 9],
+  ["nasal-spray", "بخاخ أنف ملحي", "أدوية تنفسية", 700, 1050, 47, 22],
+  ["loratadine", "لوراتادين 10 مجم", "مضادات حساسية", 480, 750, 61, 25],
+  ["eye-drops", "قطرة عين مرطبة", "عناية وعيون", 1100, 1700, 29, 10],
+  ["antiseptic", "مطهر جروح 100 مل", "إسعافات أولية", 620, 950, 52, 28],
+  ["gauze", "شاش طبي معقم", "إسعافات أولية", 180, 300, 140, 34],
+  ["plaster", "لاصق جروح - علبة", "إسعافات أولية", 300, 500, 76, 30],
+  ["thermometer", "ميزان حرارة رقمي", "مستلزمات طبية", 2200, 3500, 11, 60],
+  ["bp-monitor", "جهاز ضغط رقمي", "مستلزمات طبية", 12000, 18000, 4, 60],
+  ["baby-milk", "حليب أطفال مرحلة 1", "أمومة وطفل", 3200, 4400, 23, 8],
+  ["baby-diapers", "حفاضات أطفال - كبير", "أمومة وطفل", 2600, 3600, 18, 40],
+  ["sunscreen", "واقٍ شمسي SPF50", "عناية وعيون", 3400, 4900, 9, 3],
+  ["expired-syrup", "شراب فيتامينات - دفعة قديمة", "فيتامينات ومكملات", 800, 1200, 5, -2],
+  ["expired-cream", "كريم مرطب - دفعة قديمة", "عناية وعيون", 1400, 2100, 3, -5],
+];
+
+const DEMO_CUSTOMERS = [
+  ["ahmad", "أحمد الشوا", "0599123401", 0],
+  ["huda", "هدى النجار", "0599123402", 4500],
+  ["mahmoud", "محمود أبو ندى", "0599123403", 0],
+  ["samar", "سمر الحلبي", "0599123404", 12800],
+  ["khaled", "خالد مشتهى", "0599123405", 0],
+  ["fatima", "فاطمة الأغا", "0599123406", 3200],
+  ["yousef", "يوسف الدحدوح", "0599123407", 0],
+  ["nour", "نور شعث", "0599123408", 7600],
+  ["clinic", "عيادة النور - حساب آجل", "0599123409", 21500],
+  ["walid", "وليد السقا", "0599123410", 0],
+];
+
+const DEMO_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+const DEMO_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * مولّد شبه عشوائي ثابت البذرة. النتيجة نفسها لكل صيدلية عرض، فالعرض التقديمي
+ * لا يتغيّر بين مرة وأخرى، ويمكن وصف ما سيراه العميل قبل فتح الشاشة.
+ */
+function demoRandom(seed) {
+  let value = seed >>> 0;
+  return () => {
+    value = (value * 1664525 + 1013904223) >>> 0;
+    return value / 4294967296;
+  };
+}
+
+/**
+ * بيانات العرض. تُبنى على مرحلتين عمدًا: تُولَّد الحركات أولًا ويُحسب أثرها،
+ * ثم تُكتب الدفعات بالرصيد الصافي. السبب أن العميل عند أول مزامنة يأخذ
+ * `qty_snapshot` بوصفه الحقيقة الحالية، فلو كانت اللقطة هي رصيد الافتتاح
+ * لظهر مخزون أكبر من الواقع بمقدار كل ما بيع.
+ */
+function demoSeedStatements(db, pharmacyId, now) {
+  const statements = [];
+  const random = demoRandom(20260820);
+  const ownerId = `owner_${pharmacyId}`;
+  const moveStatements = [];
+  const stock = new Map();
+  const sellable = [];
+
+  const stockMove = (id, batchId, delta, reason, refId, at) =>
+    db.prepare(
+      `INSERT INTO stock_moves (id, pharmacy_id, batch_id, delta, reason, ref_id, device_id, user_id, at)
+       VALUES (?, ?, ?, ?, ?, ?, 'demo-seed', ?, ?)`
+    ).bind(id, pharmacyId, batchId, delta, reason, refId, ownerId, at);
+
+  for (const [key, name, category, cost, sell, quantity, expiryMonths] of DEMO_CATALOG) {
+    const productId = `${pharmacyId}_demo_${key}`;
+    const batchId = `${productId}_batch`;
+    const barcode = `628${String(Math.floor(random() * 1e9)).padStart(9, "0")}`;
+    statements.push(
+      db.prepare(
+        "INSERT INTO products (id, pharmacy_id, name, barcode, category, is_deleted, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?)"
+      ).bind(productId, pharmacyId, name, barcode, category, now)
+    );
+    // حركة الشراء الافتتاحية: الرصيد ناتج حركات لا رقمًا مكتوبًا يدويًا.
+    moveStatements.push(stockMove(`${batchId}_open`, batchId, quantity, "purchase", null, now - 120 * DEMO_DAY_MS));
+    stock.set(batchId, {
+      key, batchId, productId, name, cost, sell, quantity,
+      expiry: now + expiryMonths * DEMO_MONTH_MS,
+      barcode, remaining: quantity,
+    });
+    if (expiryMonths > 0) sellable.push(batchId);
+  }
+
+  for (const [key, name, phone, debt] of DEMO_CUSTOMERS) {
+    statements.push(
+      db.prepare(
+        `INSERT INTO customers (id, pharmacy_id, name, phone, debt_agorot, is_deleted, updated_at)
+         VALUES (?, ?, ?, ?, ?, 0, ?)`
+      ).bind(`${pharmacyId}_demo_cust_${key}`, pharmacyId, name, phone, debt, now)
+    );
+  }
+
+  // إخراجات سابقة حتى يفتح العميل تقرير الهدر فيجده يحكي قصة، لا صفرًا.
+  // «حليب أطفال» متكرر عمدًا: هذا بالضبط ما يجب أن يكشفه التقرير للمالك.
+  const wasteHistory = [
+    ["baby-milk", 4, "expired", 78],
+    ["baby-milk", 3, "expired", 47],
+    ["baby-milk", 3, "expired", 12],
+    ["cough-syrup", 3, "expired", 25],
+    ["eye-drops", 2, "damaged", 9],
+    ["insulin-pen", 1, "damaged", 33],
+    ["augmentin-syrup", 4, "return_supplier", 18],
+  ];
+  wasteHistory.forEach(([key, qty, reason, daysAgo], index) => {
+    const batchId = `${pharmacyId}_demo_${key}_batch`;
+    const entry = stock.get(batchId);
+    if (!entry || entry.remaining < qty) return;
+    entry.remaining -= qty;
+    moveStatements.push(stockMove(
+      `${pharmacyId}_demo_waste_${index}`, batchId, -qty, reason, null, now - daysAgo * DEMO_DAY_MS
+    ));
+  });
+
+  // فواتير موزّعة على آخر ٣٠ يومًا حتى تمتلئ شاشات المبيعات والتقارير بحركة حقيقية.
+  for (let index = 0; index < 45; index += 1) {
+    const daysAgo = Math.floor(random() * 30);
+    const at = now - daysAgo * DEMO_DAY_MS - Math.floor(random() * 10 * 60 * 60 * 1000);
+    const lineCount = 1 + Math.floor(random() * 3);
+    const items = [];
+    let total = 0;
+    for (let line = 0; line < lineCount; line += 1) {
+      const entry = stock.get(sellable[Math.floor(random() * sellable.length)]);
+      const qty = 1 + Math.floor(random() * 3);
+      // لا نبيع أكثر مما اشترينا: الرصيد السالب يجعل العرض غير قابل للتصديق.
+      if (!entry || entry.remaining < qty + 2) continue;
+      entry.remaining -= qty;
+      total += entry.sell * qty;
+      items.push({ batch_id: entry.batchId, name: entry.name, qty, price_agorot: entry.sell, cost_agorot: entry.cost });
+      moveStatements.push(stockMove(
+        `${pharmacyId}_demo_mv_${index}_${line}`, entry.batchId, -qty, "sale",
+        `${pharmacyId}_demo_inv_${index}`, at
+      ));
+    }
+    if (!items.length) continue;
+    const onCredit = random() < 0.2;
+    const customer = DEMO_CUSTOMERS[Math.floor(random() * DEMO_CUSTOMERS.length)];
+    statements.push(
+      db.prepare(
+        `INSERT INTO invoices
+         (id, pharmacy_id, invoice_number, total_agorot, user_id, cashier_name, customer_id,
+          payment_type, items_json, is_voided, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+      ).bind(
+        `${pharmacyId}_demo_inv_${index}`, pharmacyId, `INV-${String(1001 + index)}`, total,
+        ownerId, "المالك", onCredit ? `${pharmacyId}_demo_cust_${customer[0]}` : null,
+        onCredit ? "debt" : "cash", JSON.stringify(items), at, at
+      )
+    );
+  }
+
+  // الدفعات تُكتب الآن بالرصيد الصافي بعد البيع والإتلاف.
+  for (const entry of stock.values()) {
+    statements.push(
+      db.prepare(
+        `INSERT INTO batches
+         (id, pharmacy_id, product_id, batch_number, expiry_end, sell_price_agorot,
+          cost_price_agorot, qty_snapshot, is_deleted, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
+      ).bind(
+        entry.batchId, pharmacyId, entry.productId, `LOT-${entry.barcode.slice(-5)}`,
+        entry.expiry, entry.sell, entry.cost, entry.remaining, now
+      )
+    );
+  }
+  statements.push(...moveStatements);
+
+  // تسديدات جزئية على الحسابات الآجلة حتى تظهر شاشة الديون بحركة لا بأرصدة ساكنة.
+  let paymentIndex = 0;
+  for (const [key, , , debt] of DEMO_CUSTOMERS) {
+    if (debt <= 0) continue;
+    statements.push(
+      db.prepare(
+        `INSERT INTO payments (id, pharmacy_id, customer_id, amount_agorot, user_id, at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        `${pharmacyId}_demo_pay_${paymentIndex}`, pharmacyId, `${pharmacyId}_demo_cust_${key}`,
+        Math.round(debt / 2), ownerId, now - (5 + paymentIndex) * DEMO_DAY_MS, now
+      )
+    );
+    paymentIndex += 1;
+  }
+
+  return statements;
+}
+
+async function provisionFromAthar(env, signed) {
+  const db = env.DB;
+  const body = signed.body;
+  const tenantId = adapterRequired(body.tenant_id, "INVALID_TENANT_ID", 80);
+  const slug = adapterRequired(body.slug, "INVALID_SLUG", 40);
+  const displayName = adapterRequired(body.display_name, "INVALID_DISPLAY_NAME", 160);
+  const environment = body.environment === "demo" ? "demo" : body.environment === "production" ? "production" : "";
+  if (!environment) throw new AdapterHttpError(422, "INVALID_ENVIRONMENT", "Environment must be demo or production.");
+  const planCode = adapterRequired(body.plan_code, "INVALID_PLAN_CODE", 80);
+  const config = body.config && typeof body.config === "object" && !Array.isArray(body.config) ? body.config : {};
+  const phone = String(config.phone || "").trim().slice(0, 40);
+  const address = String(config.address || "").trim().slice(0, 300);
+  const requestedCurrency = String(config.currency || "ILS").trim().toUpperCase().slice(0, 8);
+  const currency = requestedCurrency === "ILS" ? "\u20aa" : requestedCurrency;
+
+  const started = await beginAdapterRequest(db, signed.requestId, "create", tenantId, signed.requestHash);
+  const pin = await ownerPin(env.ATHAR_ADAPTER_SECRET, signed.requestId, tenantId);
+  if (started.replay) {
+    return adapterJson({
+      ...started.result,
+      credentials: { pharmacy_id: started.result.external_tenant_id, owner_pin: pin },
+      replayed: true,
+    });
+  }
+
+  try {
+    const mapped = await db.prepare("SELECT pharmacy_id FROM pharmacies WHERE control_tenant_id = ?").bind(tenantId).first();
+    if (mapped) throw new AdapterHttpError(409, "TENANT_ALREADY_EXISTS", "This Athar tenant is already mapped to a pharmacy.");
+
+    const pharmacyId = await externalPharmacyId(slug, tenantId);
+    const salt = newSalt();
+    const pinHash = await derivePin(pin, salt);
+    const now = Date.now();
+    const publicUrl = publicPharmacyUrl(env, pharmacyId);
+    const result = {
+      ok: true, request_id: signed.requestId, tenant_id: tenantId,
+      external_tenant_id: pharmacyId, status: "active", environment, public_url: publicUrl,
+    };
+    const statements = [
+      db.prepare(
+        `INSERT INTO pharmacies
+         (pharmacy_id, control_tenant_id, name, phone, address, currency, is_active, environment,
+          plan_code, trial_expires_at, lifecycle_status, provisioned_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 'active', ?, ?, ?)`
+      ).bind(pharmacyId, tenantId, displayName, phone, address, currency, environment, planCode,
+        body.trial_expires_at || null, now, now, now),
+      db.prepare(
+        "INSERT INTO settings (pharmacy_id, name, phone, address, currency, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      ).bind(pharmacyId, displayName, phone, address, currency, now),
+      db.prepare(
+        `INSERT INTO users (id, pharmacy_id, name, role, pin_hash, pin_salt, is_active, updated_at)
+         VALUES (?, ?, ?, 'owner', ?, ?, 1, ?)`
+      ).bind(`owner_${pharmacyId}`, pharmacyId, "\u0627\u0644\u0645\u0627\u0644\u0643", pinHash, salt, now),
+    ];
+    if (environment === "demo") statements.push(...demoSeedStatements(db, pharmacyId, now));
+    statements.push(
+      db.prepare(
+        `UPDATE adapter_requests SET status = 'succeeded', response_json = ?, error_code = '', completed_at = ?
+         WHERE request_id = ?`
+      ).bind(JSON.stringify(result), now, signed.requestId)
+    );
+    await db.batch(statements);
+    console.log(JSON.stringify({ event: "adapter.provision", request_id: signed.requestId, tenant_id: tenantId, status: "succeeded" }));
+    return adapterJson({ ...result, credentials: { pharmacy_id: pharmacyId, owner_pin: pin } }, 201);
+  } catch (error) {
+    await markAdapterFailed(db, signed.requestId, error instanceof AdapterHttpError ? error.code : "PROVISIONING_FAILED");
+    throw error;
+  }
+}
+
+async function changeAtharTenantStatus(env, signed, tenantIdFromPath) {
+  const db = env.DB;
+  const tenantId = adapterRequired(tenantIdFromPath, "INVALID_TENANT_ID", 80);
+  const action = String(signed.body.action || "");
+  if (!["suspend", "resume", "archive", "restore"].includes(action)) {
+    throw new AdapterHttpError(422, "INVALID_ACTION", "Lifecycle action is invalid.");
+  }
+  const started = await beginAdapterRequest(db, signed.requestId, action, tenantId, signed.requestHash);
+  if (started.replay) return adapterJson({ ...started.result, replayed: true });
+
+  try {
+    const pharmacy = await db.prepare(
+      "SELECT pharmacy_id, lifecycle_status FROM pharmacies WHERE control_tenant_id = ?"
+    ).bind(tenantId).first();
+    if (!pharmacy) throw new AdapterHttpError(404, "TENANT_NOT_FOUND", "Product tenant was not found.");
+    const current = String(pharmacy.lifecycle_status || "active");
+    if (current === "archived" && action !== "archive" && action !== "restore") {
+      throw new AdapterHttpError(409, "TENANT_ARCHIVED", "An archived tenant must be restored before other changes.");
+    }
+    if (action === "restore" && current !== "archived") {
+      throw new AdapterHttpError(409, "TENANT_NOT_ARCHIVED", "Only an archived tenant can be restored.");
+    }
+    // الاستعادة تُخرج المستأجر من الأرشيف فقط وتتركه موقوفًا؛ عودة الخدمة قرار
+    // منفصل يتخذه المشغّل عبر resume، فلا يعود الاشتراك تلقائيًا بالحذف الملغى.
+    const next = action === "resume"
+      ? "active"
+      : action === "suspend" || action === "restore" ? "suspended" : "archived";
+    const active = next === "active" ? 1 : 0;
+    const now = Date.now();
+    const result = {
+      ok: true, request_id: signed.requestId, tenant_id: tenantId,
+      external_tenant_id: pharmacy.pharmacy_id, status: next,
+    };
+    const statements = [
+      db.prepare(
+        "UPDATE pharmacies SET is_active = ?, lifecycle_status = ?, updated_at = ? WHERE control_tenant_id = ?"
+      ).bind(active, next, now, tenantId),
+      db.prepare(
+        `UPDATE adapter_requests SET status = 'succeeded', response_json = ?, error_code = '', completed_at = ?
+         WHERE request_id = ?`
+      ).bind(JSON.stringify(result), now, signed.requestId),
+    ];
+    if (!active) statements.push(db.prepare("DELETE FROM sessions WHERE pharmacy_id = ?").bind(pharmacy.pharmacy_id));
+    await db.batch(statements);
+    console.log(JSON.stringify({ event: `adapter.${action}`, request_id: signed.requestId, tenant_id: tenantId, status: "succeeded" }));
+    return adapterJson(result);
+  } catch (error) {
+    await markAdapterFailed(db, signed.requestId, error instanceof AdapterHttpError ? error.code : "LIFECYCLE_FAILED");
+    throw error;
+  }
+}
+
+/**
+ * رقم سري جديد للمالك. يُشتق من معرّف الطلب نفسه، فإعادة إرسال الطلب
+ * بالمعرّف ذاته تعيد الرقم نفسه ولا تقفل المالك خارج صيدليته.
+ * الرقم القديم يبطل فورًا، وتُلغى الجلسات القائمة حتى لا يبقى جهاز مفتوحًا برقم مسروق.
+ */
+async function resetOwnerPin(env, signed, tenantIdFromPath) {
+  const db = env.DB;
+  const tenantId = adapterRequired(tenantIdFromPath, "INVALID_TENANT_ID", 80);
+  const started = await beginAdapterRequest(db, signed.requestId, "reset_owner_pin", tenantId, signed.requestHash);
+  const pin = await ownerPin(env.ATHAR_ADAPTER_SECRET, signed.requestId, tenantId);
+  if (started.replay) {
+    return adapterJson({
+      ...started.result,
+      credentials: { pharmacy_id: started.result.external_tenant_id, owner_pin: pin },
+      replayed: true,
+    });
+  }
+
+  try {
+    const pharmacy = await db.prepare(
+      "SELECT pharmacy_id, lifecycle_status FROM pharmacies WHERE control_tenant_id = ?"
+    ).bind(tenantId).first();
+    if (!pharmacy) throw new AdapterHttpError(404, "TENANT_NOT_FOUND", "Product tenant was not found.");
+    if (String(pharmacy.lifecycle_status) === "archived") {
+      throw new AdapterHttpError(409, "TENANT_ARCHIVED", "An archived tenant cannot receive a new PIN.");
+    }
+    const owner = await db.prepare(
+      "SELECT id FROM users WHERE pharmacy_id = ? AND role = 'owner' ORDER BY id LIMIT 1"
+    ).bind(pharmacy.pharmacy_id).first();
+    if (!owner) throw new AdapterHttpError(404, "OWNER_NOT_FOUND", "This tenant has no owner account.");
+
+    const salt = newSalt();
+    const pinHash = await derivePin(pin, salt);
+    const now = Date.now();
+    const result = {
+      ok: true, request_id: signed.requestId, tenant_id: tenantId,
+      external_tenant_id: pharmacy.pharmacy_id, status: "pin_reset",
+    };
+    await db.batch([
+      db.prepare(
+        "UPDATE users SET pin_hash = ?, pin_salt = ?, is_active = 1, updated_at = ? WHERE id = ?"
+      ).bind(pinHash, salt, now, owner.id),
+      db.prepare("DELETE FROM sessions WHERE pharmacy_id = ?").bind(pharmacy.pharmacy_id),
+      db.prepare(
+        `UPDATE adapter_requests SET status = 'succeeded', response_json = ?, error_code = '', completed_at = ?
+         WHERE request_id = ?`
+      ).bind(JSON.stringify(result), now, signed.requestId),
+    ]);
+    console.log(JSON.stringify({ event: "adapter.reset_owner_pin", request_id: signed.requestId, tenant_id: tenantId, status: "succeeded" }));
+    return adapterJson({ ...result, credentials: { pharmacy_id: pharmacy.pharmacy_id, owner_pin: pin } });
+  } catch (error) {
+    await markAdapterFailed(db, signed.requestId, error instanceof AdapterHttpError ? error.code : "PIN_RESET_FAILED");
+    throw error;
+  }
+}
+
+// كل جدول تشغيلي يحمل pharmacy_id. الحذف النهائي يمر على هذه القائمة كاملة
+// ثم يحذف سجل الصيدلية نفسه، فلا تبقى صفوف يتيمة بعد Purge.
+const PHARMACY_SCOPED_TABLES = [
+  "sessions", "users", "settings", "stock_moves", "batches",
+  "products", "payments", "invoices", "customers", "audit_log",
+];
+
+async function purgeAtharTenant(env, signed, tenantIdFromPath) {
+  const db = env.DB;
+  const tenantId = adapterRequired(tenantIdFromPath, "INVALID_TENANT_ID", 80);
+  const started = await beginAdapterRequest(db, signed.requestId, "purge", tenantId, signed.requestHash);
+  if (started.replay) return adapterJson({ ...started.result, replayed: true });
+
+  try {
+    const pharmacy = await db.prepare(
+      "SELECT pharmacy_id, lifecycle_status FROM pharmacies WHERE control_tenant_id = ?"
+    ).bind(tenantId).first();
+    if (!pharmacy) {
+      // الحذف idempotent: غياب السجل يعني أن عملية سابقة أتمت المهمة.
+      const done = { ok: true, request_id: signed.requestId, tenant_id: tenantId, external_tenant_id: "", status: "deleted" };
+      await db.prepare(
+        `UPDATE adapter_requests SET status = 'succeeded', response_json = ?, error_code = '', completed_at = ?
+         WHERE request_id = ?`
+      ).bind(JSON.stringify(done), Date.now(), signed.requestId).run();
+      return adapterJson(done);
+    }
+    if (String(pharmacy.lifecycle_status) !== "archived") {
+      throw new AdapterHttpError(409, "TENANT_NOT_ARCHIVED", "A tenant must be archived before it is purged.");
+    }
+
+    const now = Date.now();
+    const result = {
+      ok: true, request_id: signed.requestId, tenant_id: tenantId,
+      external_tenant_id: pharmacy.pharmacy_id, status: "deleted",
+    };
+    const statements = PHARMACY_SCOPED_TABLES.map((table) =>
+      db.prepare(`DELETE FROM ${table} WHERE pharmacy_id = ?`).bind(pharmacy.pharmacy_id)
+    );
+    statements.push(
+      db.prepare("DELETE FROM pharmacies WHERE control_tenant_id = ?").bind(tenantId),
+      db.prepare(
+        `UPDATE adapter_requests SET status = 'succeeded', response_json = ?, error_code = '', completed_at = ?
+         WHERE request_id = ?`
+      ).bind(JSON.stringify(result), now, signed.requestId)
+    );
+    await db.batch(statements);
+    console.log(JSON.stringify({ event: "adapter.purge", request_id: signed.requestId, tenant_id: tenantId, status: "succeeded" }));
+    return adapterJson(result);
+  } catch (error) {
+    await markAdapterFailed(db, signed.requestId, error instanceof AdapterHttpError ? error.code : "PURGE_FAILED");
+    throw error;
+  }
+}
+
+async function atharTenantHealth(env, requestId, tenantIdFromPath) {
+  const tenantId = adapterRequired(tenantIdFromPath, "INVALID_TENANT_ID", 80);
+  const pharmacy = await env.DB.prepare(
+    `SELECT pharmacy_id, environment, lifecycle_status, is_active
+     FROM pharmacies WHERE control_tenant_id = ?`
+  ).bind(tenantId).first();
+  if (!pharmacy) throw new AdapterHttpError(404, "TENANT_NOT_FOUND", "Product tenant was not found.");
+  return adapterJson({
+    ok: true, request_id: requestId, tenant_id: tenantId,
+    external_tenant_id: pharmacy.pharmacy_id, environment: pharmacy.environment,
+    status: pharmacy.lifecycle_status, active: Boolean(pharmacy.is_active), checked_at: new Date().toISOString(),
+  });
+}
+
+async function handleAtharAdapter(request, env) {
+  let signed;
+  try {
+    signed = await verifyAdapterRequest(request, env);
+    const path = new URL(request.url).pathname;
+    if (path === "/internal/v1/tenants" && request.method === "POST") return await provisionFromAthar(env, signed);
+    const statusMatch = path.match(/^\/internal\/v1\/tenants\/([^/]+)\/status$/);
+    if (statusMatch && request.method === "POST") {
+      return await changeAtharTenantStatus(env, signed, decodeURIComponent(statusMatch[1]));
+    }
+    const healthMatch = path.match(/^\/internal\/v1\/tenants\/([^/]+)\/health$/);
+    if (healthMatch && request.method === "GET") {
+      return await atharTenantHealth(env, signed.requestId, decodeURIComponent(healthMatch[1]));
+    }
+    const pinMatch = path.match(/^\/internal\/v1\/tenants\/([^/]+)\/reset-owner-pin$/);
+    if (pinMatch && request.method === "POST") {
+      return await resetOwnerPin(env, signed, decodeURIComponent(pinMatch[1]));
+    }
+    const purgeMatch = path.match(/^\/internal\/v1\/tenants\/([^/]+)$/);
+    if (purgeMatch && request.method === "DELETE") {
+      return await purgeAtharTenant(env, signed, decodeURIComponent(purgeMatch[1]));
+    }
+    throw new AdapterHttpError(404, "NOT_FOUND", "Adapter route was not found.");
+  } catch (error) {
+    const status = error instanceof AdapterHttpError ? error.status : 500;
+    const code = error instanceof AdapterHttpError ? error.code : "SERVER_ERROR";
+    const message = error instanceof AdapterHttpError ? error.message : "Unexpected product adapter failure.";
+    console.error(JSON.stringify({
+      event: "adapter.error",
+      request_id: signed?.requestId || "",
+      code,
+      status,
+      error_name: error instanceof Error ? error.name : "UnknownError",
+      error_message: String(error instanceof Error ? error.message : error).slice(0, 300),
+    }));
+    return adapterJson({ ok: false, error: code, message, request_id: signed?.requestId || "" }, status);
+  }
+}
+
 /* ---------------- تحديد المحاولات ---------------- */
 
 async function checkLock(db, key) {
@@ -328,6 +1006,10 @@ export default {
     const url = new URL(request.url);
     const H = corsHeaders(request, env);
     const db = env.DB;
+
+    if (url.pathname.startsWith("/internal/v1/")) {
+      return handleAtharAdapter(request, env);
+    }
 
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: H });
 

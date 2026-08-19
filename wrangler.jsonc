@@ -1,0 +1,28 @@
+{
+  "$schema": "../athar-console/node_modules/wrangler/config-schema.json",
+  "name": "pharma-sync-api",
+  "main": "worker/worker.js",
+  "compatibility_date": "2026-08-19",
+  "workers_dev": true,
+  // واجهة الصيدلية تُخدم من نفس الأصل. هذا يلغي حاجة CORS بين الواجهة
+  // والـAPI، ويعطي كل صيدلية رابطًا عامًا يعمل دون استضافة خارجية.
+  "assets": {
+    "directory": "./public",
+    "run_worker_first": ["/api/*", "/internal/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pharma-db",
+      "database_id": "bff19fd4-5831-4848-a4f5-1bc3ac281001"
+    }
+  ],
+  "vars": {
+    "PUBLIC_APP_URL": "https://pharma-sync-api.yahyakmail59.workers.dev/",
+    "ALLOWED_ORIGINS": "https://pharma-sync-api.yahyakmail59.workers.dev"
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

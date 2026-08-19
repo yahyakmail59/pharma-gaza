@@ -484,3 +484,33 @@ td.num { font-variant-numeric: tabular-nums; }
 @media print {
   .header, .bottom-nav, #toast-container { display: none !important; }
 }
+
+/* ---------- الإتلاف وتقرير الهدر ---------- */
+/* حوار الإخراج يعرض حقلين وقائمة، فيحتاج تسميات ظاهرة لا placeholder وحده. */
+dialog label {
+  display: block; font-size: 13px; font-weight: 600;
+  color: var(--muted); margin-block: 12px 5px;
+}
+dialog select {
+  width: 100%; padding: 11px 12px; border-radius: 12px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font: inherit;
+}
+dialog .dialog-hint {
+  font-size: 12px; color: var(--muted-dark);
+  margin-block: 14px 0; line-height: 1.6;
+}
+
+.btn-sm { padding: 6px 12px; font-size: 12px; }
+.alert-item .btn-sm { flex-shrink: 0; }
+
+/* عدد التنبيهات المخفية: القطع الصامت كان يخفيها دون أن يعرف المستخدم. */
+.alert-more {
+  text-align: center; font-size: 13px; color: var(--muted-dark);
+  padding: 10px; border: 1px dashed var(--border); border-radius: 12px;
+}
+
+.waste-hint {
+  font-size: 13px; color: var(--muted); line-height: 1.7;
+  background: var(--surface); border-inline-start: 3px solid var(--warning);
+}

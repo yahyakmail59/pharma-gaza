@@ -23,6 +23,21 @@ const CONFIG = {
   PBKDF2_ITER: 100000,
 };
 
+/**
+ * أسباب خروج المخزون. ثابتة عمدًا: السبب الحر («تلف» و«انتهاء» و«منتهي»)
+ * يصنع ثلاث فئات لشيء واحد فلا يُجمَّع في تقرير.
+ * `loss` تفصل الخسارة الفعلية عن الاسترداد — المرتجع للمورّد ليس هدرًا.
+ */
+const WRITE_OFF_REASONS = {
+  expired: { label: 'انتهاء صلاحية', loss: true },
+  damaged: { label: 'تلف أو كسر', loss: true },
+  lost: { label: 'فقد أو سرقة', loss: true },
+  return_supplier: { label: 'إرجاع للمورّد', loss: false },
+};
+
+const writeOffLabel = (reason) => WRITE_OFF_REASONS[reason]?.label || reason;
+const isWriteOff = (reason) => Object.hasOwn(WRITE_OFF_REASONS, reason);
+
 /* ==================== ٢. أدوات عامة ==================== */
 
 /** إنشاء عنصر DOM بأمان. لا توجد أي مسارات innerHTML للبيانات. */
@@ -165,11 +180,90 @@ function promptDialog({ title, message, value = '', type = 'text', placeholder =
   });
 }
 
+/**
+ * حوار إخراج كمية من المخزون. الكمية والسبب معًا في شاشة واحدة:
+ * فصلهما كان يجعل المستخدم يؤكد رقمًا قبل أن يعرف أنه سيُسأل عن السبب.
+ */
+function writeOffDialog({ title, productName, batchNumber, maxQty, defaultQty, defaultReason }) {
+  return new Promise((resolve) => {
+    const dlg = el('dialog');
+    const qty = el('input', {
+      type: 'number', min: '1', max: String(maxQty), value: String(defaultQty || maxQty),
+      autocomplete: 'off', 'aria-label': 'الكمية المُخرجة',
+    });
+    const reason = el('select', { 'aria-label': 'السبب' });
+    for (const [key, cfg] of Object.entries(WRITE_OFF_REASONS)) {
+      reason.append(el('option', { value: key, text: cfg.label }));
+    }
+    if (defaultReason) reason.value = defaultReason;
+    const note = el('input', { type: 'text', placeholder: 'ملاحظة اختيارية', autocomplete: 'off' });
+
+    dlg.append(
+      el('h3', { text: title }),
+      el('p', { text: `${productName} — دفعة ${batchNumber || '—'} • المتوفر ${maxQty}` }),
+      el('label', { text: 'الكمية المُخرجة' }), qty,
+      el('label', { text: 'السبب' }), reason,
+      el('label', { text: 'ملاحظة' }), note,
+      el('p', { class: 'dialog-hint', text: 'لا يُحذف السجل. تُسجَّل حركة إخراج تبقى في التقارير وسجل التدقيق.' }),
+      el('div', { class: 'dialog-actions' },
+        el('button', { class: 'btn-ghost', text: 'إلغاء', onclick: () => dlg.close('') }),
+        el('button', {
+          class: 'btn-danger', text: 'تأكيد الإخراج',
+          onclick: () => {
+            const n = parseInt(qty.value, 10);
+            if (!Number.isInteger(n) || n < 1 || n > maxQty) { toast('أدخل كمية ضمن المتوفر', 'error'); return; }
+            dlg.close(JSON.stringify({ qty: n, reason: reason.value, note: note.value.trim().slice(0, 80) }));
+          },
+        }))
+    );
+    dlg.addEventListener('close', () => {
+      resolve(dlg.returnValue ? JSON.parse(dlg.returnValue) : null);
+      dlg.remove();
+    });
+    document.body.append(dlg);
+    dlg.showModal();
+    qty.focus();
+    qty.select();
+  });
+}
+
 function emptyState(emoji, title, desc) {
   return el('div', { class: 'empty-state' },
     el('span', { class: 'em', text: emoji }),
     el('div', { class: 't', text: title }),
     el('div', { class: 'd', text: desc }));
+}
+
+/* ==================== ٢ب. تأجيل تنبيهات النواقص ==================== */
+
+/**
+ * التأجيل للنواقص وحدها. تنبيه الصلاحية لا يُؤجَّل: الدواء المنتهي على الرف
+ * خطر لا قرار شراء، وطريقة إغلاقه هي إخراجه فعلًا.
+ *
+ * يُحفظ محليًا في `meta` لا في السحابة: هذا تفضيل عرض لجهاز، لا بيانات عمل.
+ * والتأجيل مؤقت بتاريخ — يعود التنبيه وحده، فلا يتحوّل الإخفاء إلى نسيان.
+ */
+const SNOOZE_KEY = () => `snooze:${State.pharmacyId}`;
+
+async function loadSnoozes() {
+  const rec = await db.meta.get(SNOOZE_KEY());
+  const map = rec?.value || {};
+  const now = Date.now();
+  const live = Object.fromEntries(Object.entries(map).filter(([, until]) => until > now));
+  if (Object.keys(live).length !== Object.keys(map).length) {
+    await db.meta.put({ key: SNOOZE_KEY(), value: live });
+  }
+  return live;
+}
+
+async function snoozeBatch(batchId, days) {
+  const map = await loadSnoozes();
+  map[batchId] = Date.now() + days * 86400000;
+  await db.meta.put({ key: SNOOZE_KEY(), value: map });
+}
+
+async function clearSnoozes() {
+  await db.meta.put({ key: SNOOZE_KEY(), value: {} });
 }
 
 /* ==================== ٣. قاعدة البيانات ==================== */
@@ -635,6 +729,9 @@ async function applyUpdates(u) {
   for (const m of u.moves || []) {
     if (await db.moves.get(m.id)) continue;
     await db.moves.add({ ...m, pharmacy_id: ph });
+    // في أول مزامنة الرصيد جاء من اللقطة، واللقطة تشمل هذه الحركات أصلاً.
+    // نحفظها للتاريخ والتقارير، ولا نطبّقها على الكمية وإلا خُصمت مرتين.
+    if (u.first_sync) continue;
     await db.batches.where('id').equals(m.batch_id).modify((b) => {
       b.quantity = (b.quantity || 0) + m.delta;
     });
@@ -779,9 +876,14 @@ async function renderDashboard() {
 
   const expired = batches.filter((b) => b.expiry_end && b.expiry_end < now && b.quantity > 0);
   const soon = batches.filter((b) => b.expiry_end >= now && b.expiry_end < warnAt && b.quantity > 0);
-  const low = batches.filter((b) => b.quantity > 0 && b.quantity < CONFIG.LOW_STOCK_DEFAULT);
+  const lowAll = batches.filter((b) => b.quantity > 0 && b.quantity < CONFIG.LOW_STOCK_DEFAULT);
+  const snoozed = await loadSnoozes();
+  const low = lowAll.filter((b) => !snoozed[b.id]);
+  const snoozedCount = lowAll.length - low.length;
 
-  $('stat-low-stock').textContent = low.length;
+  // العدّاد يعرض النواقص كلها. التأجيل يهدّئ القائمة ولا يغيّر الرقم،
+  // وإلا صار المؤشر يكذب على المالك في أهم شاشة عنده.
+  $('stat-low-stock').textContent = lowAll.length;
   $('stat-expiring').textContent = soon.length;
 
   // قسم التنبيهات — كان فارغاً دائماً في النسخة السابقة
@@ -789,14 +891,28 @@ async function renderDashboard() {
   clear(box);
   const prods = await db.products.where('pharmacy_id').equals(State.pharmacyId).toArray();
   const pMap = Object.fromEntries(prods.map((p) => [p.id, p]));
-  const rows = [
+  const all = [
     ...expired.map((b) => ({ b, kind: 'expired' })),
     ...soon.map((b) => ({ b, kind: 'soon' })),
     ...low.map((b) => ({ b, kind: 'low' })),
-  ].slice(0, 25);
+  ];
+  const SHOWN = 25;
+  const rows = all.slice(0, SHOWN);
+
+  const snoozeNote = () => {
+    if (!snoozedCount) return;
+    box.append(el('div', { class: 'alert-more' },
+      el('span', { text: `${snoozedCount} من النواقص مؤجلة مؤقتًا. ` }),
+      el('button', {
+        class: 'btn-ghost btn-sm', text: 'إظهارها',
+        onclick: async () => { await clearSnoozes(); renderDashboard(); },
+      })));
+  };
 
   if (!rows.length) {
-    box.append(emptyState('✅', 'لا توجد تنبيهات', 'المخزون سليم ولا توجد أصناف قاربت على الانتهاء.'));
+    box.append(emptyState('✅', 'لا توجد تنبيهات',
+      snoozedCount ? 'لا تنبيهات نشطة الآن.' : 'المخزون سليم ولا توجد أصناف قاربت على الانتهاء.'));
+    snoozeNote();
     return;
   }
   for (const { b, kind } of rows) {
@@ -806,12 +922,35 @@ async function renderDashboard() {
       soon:    ['alert-expiry', 'قارب على الانتهاء', `دفعة ${b.batch_number} • ينتهي ${fmtMonth(b.expiry_end)} • متبقٍ ${b.quantity}`],
       low:     ['alert-low', 'كمية منخفضة', `دفعة ${b.batch_number} • متبقٍ ${b.quantity} فقط`],
     }[kind];
+    // التنبيه ليس رسالة تُقرأ فتُخفى، بل وضع قائم. الصنف المنتهي يخرج من
+    // القائمة حين يخرج من الرصيد فعلًا، فيكون الزر هو طريقة إغلاق التنبيه.
+    let action;
+    if (kind === 'expired' && !State.readOnly) {
+      action = el('button', {
+        class: 'btn-danger btn-sm', text: 'إتلاف',
+        onclick: async () => {
+          if (await writeOffBatch(b.id, 'expired')) { renderDashboard(); renderInventory(); }
+        },
+      });
+    } else if (kind === 'low') {
+      // النقص قرار شراء قد لا يمكن تنفيذه اليوم، فيُؤجَّل بتاريخ ويعود وحده.
+      action = el('button', {
+        class: 'btn-ghost btn-sm', text: 'تأجيل 7 أيام',
+        onclick: async () => { await snoozeBatch(b.id, 7); renderDashboard(); },
+      });
+    } else {
+      action = el('span', { class: 'badge badge-danger', text: 'صلاحية' });
+    }
     box.append(el('div', { class: 'alert-item ' + cfg[0] },
       el('div', {}, el('div', { class: 't', text: `${name} — ${cfg[1]}` }),
                      el('div', { class: 'd', text: cfg[2] })),
-      el('span', { class: 'badge ' + (kind === 'low' ? 'badge-warn' : 'badge-danger'),
-                   text: kind === 'low' ? 'نواقص' : 'صلاحية' })));
+      action));
   }
+  // القطع الصامت يخفي تنبيهات دون أن يعرف المستخدم أنها موجودة.
+  if (all.length > SHOWN) {
+    box.append(el('div', { class: 'alert-more', text: `و${all.length - SHOWN} تنبيهًا آخر — راجع شاشة المخزون.` }));
+  }
+  snoozeNote();
 }
 
 /* ==================== ١٣. نقطة البيع ==================== */
@@ -1313,7 +1452,17 @@ async function renderInventory() {
       el('td', { class: 'num', dataset: { label: 'السعر' }, text: Money.fmt(b.sell_price_agorot) }),
       el('td', { dataset: { label: 'الحالة' } }, stateBadge),
       el('td', { dataset: { label: 'إجراء' } },
-        el('button', { class: 'btn-info', text: 'تسوية', onclick: () => adjustQty(b.id) }))));
+        el('button', { class: 'btn-info', text: 'تسوية', onclick: () => adjustQty(b.id) }),
+        b.quantity > 0
+          ? el('button', {
+              class: 'btn-danger btn-sm', text: 'إخراج',
+              onclick: async () => {
+                if (await writeOffBatch(b.id, info.state === 'expired' ? 'expired' : 'damaged')) {
+                  renderInventory(); renderDashboard();
+                }
+              },
+            })
+          : null)));
   }
 
   if (batches.length > shown.length) {
@@ -1324,6 +1473,48 @@ async function renderInventory() {
         onclick: () => { State.invPage++; renderInventory(); },
       })));
   }
+}
+
+/**
+ * إخراج كمية من دفعة بسبب مصنّف. هذا هو الإجراء الصحيح للصنف المنتهي:
+ * البيع ممنوع أصلًا، وبدون إخراج تبقى العلبة في الرصيد فتضخّم قيمة المخزون
+ * وتلوّث التنبيهات إلى الأبد. الحذف ليس بديلًا — الدواء المنتهي نفاية
+ * خاضعة للرقابة ويجب أن يبقى أثر لما أُتلف ومتى.
+ */
+async function writeOffBatch(batchId, defaultReason = 'expired') {
+  if (State.readOnly) { toast(readOnlyReason(), 'error'); return false; }
+  const batch = await db.batches.get(batchId);
+  if (!batch) return false;
+  if ((batch.quantity || 0) <= 0) { toast('لا توجد كمية لإخراجها', 'error'); return false; }
+  const product = await db.products.get(batch.product_id);
+
+  const result = await writeOffDialog({
+    title: 'إخراج من المخزون',
+    productName: product?.name || 'صنف محذوف',
+    batchNumber: batch.batch_number,
+    maxQty: batch.quantity,
+    defaultQty: batch.quantity,
+    defaultReason,
+  });
+  if (!result) return false;
+
+  const cfg = WRITE_OFF_REASONS[result.reason];
+  const value = (batch.cost_price_agorot || 0) * result.qty;
+  const confirmed = await confirmDialog({
+    title: cfg.loss ? 'تأكيد الإتلاف' : 'تأكيد الإرجاع',
+    message: `${result.qty} وحدة • ${cfg.label} • بتكلفة ${Money.fmt(value)}.`
+      + (cfg.loss ? ' ستُحتسب خسارة في تقرير الهدر.' : ' تُحتسب استردادًا لا خسارة.'),
+    confirmText: 'تأكيد',
+    danger: true,
+  });
+  if (!confirmed) return false;
+
+  await applyMove({ batchId, delta: -result.qty, reason: result.reason, refId: null });
+  await audit('write_off', 'batch', batchId,
+    `${result.qty} × ${product?.name || batchId} • ${cfg.label}${result.note ? ' • ' + result.note : ''}`);
+  toast(cfg.loss ? 'تم الإتلاف وسُجّل في تقرير الهدر' : 'تم تسجيل الإرجاع');
+  syncNow();
+  return true;
 }
 
 async function adjustQty(batchId) {
@@ -1679,9 +1870,80 @@ async function payDebt(customerId) {
 
 /* ==================== ١٦. التقارير ==================== */
 
+/**
+ * تقرير الهدر. هذا ما يحوّل الإتلاف من إجراء إداري إلى معلومة تجارية:
+ * حين يرى المالك أنه أتلف مبلغًا معيّنًا من صنف واحد، يصحّح كمية طلبه التالي.
+ * يُحسب من الحركات لا من عدّاد منفصل، فلا يمكن أن يختلف عن الرصيد.
+ */
+async function renderWaste(days = 30) {
+  const since = Date.now() - days * 86400000;
+  // جدول الحركات مفهرس على [pharmacy_id+at] فقط، فالمدى يُقرأ من الفهرس
+  // بدل تحميل كل حركات الصيدلية ثم تصفيتها في الذاكرة.
+  const moves = (await db.moves
+    .where('[pharmacy_id+at]')
+    .between([State.pharmacyId, since], [State.pharmacyId, Dexie.maxKey])
+    .toArray())
+    .filter((m) => isWriteOff(m.reason) && m.delta < 0);
+
+  const batches = await db.batches.where('pharmacy_id').equals(State.pharmacyId).toArray();
+  const bMap = Object.fromEntries(batches.map((b) => [b.id, b]));
+  const prods = await db.products.where('pharmacy_id').equals(State.pharmacyId).toArray();
+  const pMap = Object.fromEntries(prods.map((p) => [p.id, p]));
+
+  let lossTotal = 0;
+  let recoveredTotal = 0;
+  const byProduct = new Map();
+  for (const m of moves) {
+    const batch = bMap[m.batch_id];
+    const qty = Math.abs(m.delta);
+    const value = (batch?.cost_price_agorot || 0) * qty;
+    if (WRITE_OFF_REASONS[m.reason].loss) lossTotal += value; else recoveredTotal += value;
+
+    const productId = batch?.product_id || m.batch_id;
+    const row = byProduct.get(productId) || { name: pMap[productId]?.name || 'صنف محذوف', qty: 0, value: 0, times: 0, reasons: new Set() };
+    row.qty += qty;
+    row.times += 1;
+    row.reasons.add(writeOffLabel(m.reason));
+    if (WRITE_OFF_REASONS[m.reason].loss) row.value += value;
+    byProduct.set(productId, row);
+  }
+
+  $('waste-loss').textContent = Money.fmt(lossTotal);
+  $('waste-recovered').textContent = Money.fmt(recoveredTotal);
+  $('waste-count').textContent = String(moves.length);
+
+  const body = $('waste-body');
+  clear(body);
+  const oldEmpty = $('waste-empty');
+  if (oldEmpty) oldEmpty.remove();
+
+  if (!byProduct.size) {
+    const e = emptyState('♻️', 'لا يوجد هدر مسجّل', `لم تُخرج أي كمية خلال آخر ${days} يومًا.`);
+    e.id = 'waste-empty';
+    $('waste-wrap').append(e);
+    return;
+  }
+  // الأغلى أولًا: الصنف الذي يستنزف المال هو الذي يستحق تغيير سياسة شرائه.
+  const rows = [...byProduct.values()].sort((a, b) => b.value - a.value);
+  for (const r of rows) {
+    body.append(el('tr', {},
+      el('td', { dataset: { label: 'الصنف' }, text: r.name }),
+      el('td', { class: 'num', dataset: { label: 'الكمية' }, text: String(r.qty) }),
+      el('td', { dataset: { label: 'السبب' }, text: [...r.reasons].join('، ') }),
+      el('td', { class: 'num', dataset: { label: 'مرات' }, text: String(r.times) }),
+      el('td', { class: 'num', dataset: { label: 'الخسارة' }, text: Money.fmt(r.value) })));
+  }
+  if (rows.length > 1 && rows[0].value > 0 && rows[0].value >= lossTotal * 0.3) {
+    body.append(el('tr', {},
+      el('td', { colspan: '5', class: 'waste-hint',
+                 text: `«${rows[0].name}» وحده يمثّل ${Math.round((rows[0].value / lossTotal) * 100)}% من الخسارة. راجع كمية الطلب أو مدة الصلاحية عند الشراء.` })));
+  }
+}
+
 async function renderReports() {
   const invs = await todayInvoices();
   const live = invs.filter((i) => !i.is_voided);
+  await renderWaste(Number($('waste-range')?.value) || 30);
 
   const cash = live.filter((i) => i.payment_type === 'cash').reduce((s, i) => s + i.total_agorot, 0);
   const debt = live.filter((i) => i.payment_type === 'debt').reduce((s, i) => s + i.total_agorot, 0);
@@ -2054,7 +2316,8 @@ async function boot() {
   if (!dev) { dev = uuid(); localStorage.setItem('device_id', dev); }
   State.deviceId = dev;
 
-  $('pharmacy-id-input').value = localStorage.getItem('last_pharmacy') || '';
+  const linkedPharmacy = new URLSearchParams(window.location.search).get('pharmacy');
+  $('pharmacy-id-input').value = linkedPharmacy || localStorage.getItem('last_pharmacy') || '';
 
   // الأحداث — كلها addEventListener، لا onclick مضمّن (شرط CSP الصارمة)
   document.querySelectorAll('[data-pin]').forEach((b) =>
@@ -2091,6 +2354,7 @@ async function boot() {
   $('btn-save-settings').addEventListener('click', saveSettings);
   $('btn-add-employee').addEventListener('click', addEmployee);
   $('btn-eod').addEventListener('click', printEOD);
+  $('waste-range').addEventListener('change', (e) => renderWaste(Number(e.target.value) || 30));
   $('btn-backup-export').addEventListener('click', exportBackup);
   $('backup-file').addEventListener('change', importBackup);
   $('btn-backup-import').addEventListener('click', () => $('backup-file').click());

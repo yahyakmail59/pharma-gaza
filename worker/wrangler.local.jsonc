@@ -1,0 +1,19 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "pharma-sync-api",
+  "main": "./worker.js",
+  "compatibility_date": "2026-08-19",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pharma-adapter-local",
+      "database_id": "00000000-0000-0000-0000-000000000001"
+    }
+  ],
+  "vars": {
+    "PUBLIC_APP_URL": "http://127.0.0.1:8788/"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

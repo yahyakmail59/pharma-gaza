@@ -267,6 +267,46 @@
           </table>
         </div>
       </div>
+
+      <h2 class="section-title" style="margin-block-start:28px;">تقرير الهدر</h2>
+      <div class="form-card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;">
+        <p style="color:var(--muted-dark);font-size:13px;margin:0;max-width:46ch;">
+          كل كمية خرجت من المخزون دون بيع. الصنف الذي يتكرر هنا تشتريه بكمية أكبر من حاجتك.
+        </p>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+          الفترة
+          <select id="waste-range">
+            <option value="30" selected>آخر 30 يوماً</option>
+            <option value="90">آخر 90 يوماً</option>
+            <option value="365">آخر سنة</option>
+          </select>
+        </label>
+      </div>
+      <div class="dash-grid">
+        <div class="dash-card">
+          <div class="icon">🗑️</div>
+          <div class="value" id="waste-loss" style="color:var(--danger)">0.00</div>
+          <div class="title">خسارة الهدر (بالتكلفة)</div>
+        </div>
+        <div class="dash-card">
+          <div class="icon">↩️</div>
+          <div class="value" id="waste-recovered" style="color:var(--primary)">0.00</div>
+          <div class="title">مُسترد من المورّدين</div>
+        </div>
+        <div class="dash-card">
+          <div class="icon">📋</div>
+          <div class="value" id="waste-count" style="color:var(--info)">0</div>
+          <div class="title">عدد عمليات الإخراج</div>
+        </div>
+      </div>
+      <div id="waste-wrap">
+        <div class="table-container">
+          <table>
+            <thead><tr><th>الصنف</th><th>الكمية</th><th>السبب</th><th>مرات</th><th>الخسارة</th></tr></thead>
+            <tbody id="waste-body"></tbody>
+          </table>
+        </div>
+      </div>
     </section>
 
     <!-- ---------- الإعدادات ---------- -->
