@@ -63,6 +63,26 @@ function el(tag, props, ...kids) {
 const $ = (id) => document.getElementById(id);
 const clear = (node) => { while (node.firstChild) node.removeChild(node.firstChild); };
 
+const ICON_PATHS = {
+  home: 'M3 10.5 12 3l9 7.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5zM9 21v-6h6v6',
+  pos: 'M4 5h16v14H4zM7 8h10M7 12h3M14 12h3M7 16h3M14 16h3',
+  inventory: 'M4 4h16v16H4zM8 4v16M4 9h4M4 14h4',
+  customers: 'M16 20v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9.5 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM18 8a3 3 0 0 1 0 6M21 20v-1a4 4 0 0 0-3-3',
+  reports: 'M5 20V10M12 20V4M19 20v-7',
+  settings: 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0-8zM4 12H2M22 12h-2M12 4V2M12 22v-2M5 5 3.5 3.5M20.5 20.5 19 19M19 5l1.5-1.5M5 19l-1.5 1.5',
+  package: 'M4 7.5 12 3l8 4.5v9L12 21l-8-4.5zM4 7.5l8 4.5 8-4.5M12 12v9',
+};
+
+function iconSvg(name, className = 'ui-icon') {
+  const svg = el('svg', {
+    class: className, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+    'stroke-width': '1.8', 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+    'aria-hidden': 'true', focusable: 'false',
+  });
+  svg.append(el('path', { d: ICON_PATHS[name] || ICON_PATHS.package }));
+  return svg;
+}
+
 const uuid = () =>
   crypto.randomUUID ? crypto.randomUUID()
     : 'id-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
@@ -229,7 +249,7 @@ function writeOffDialog({ title, productName, batchNumber, maxQty, defaultQty, d
 
 function emptyState(emoji, title, desc) {
   return el('div', { class: 'empty-state' },
-    el('span', { class: 'em', text: emoji }),
+    el('span', { class: 'em' }, iconSvg('package')),
     el('div', { class: 't', text: title }),
     el('div', { class: 'd', text: desc }));
 }
@@ -806,12 +826,12 @@ async function importLegacyIfAny() {
 
 const VIEWS = ['dash', 'pos', 'inv', 'cust', 'rep', 'set'];
 const NAV = [
-  { id: 'dash', label: 'الرئيسية', icon: '🏠', roles: ['owner', 'pharmacist', 'cashier'] },
-  { id: 'pos',  label: 'الكاشير',  icon: '🛒', roles: ['owner', 'pharmacist', 'cashier'] },
-  { id: 'inv',  label: 'المخزون',  icon: '📦', roles: ['owner', 'pharmacist'] },
-  { id: 'cust', label: 'الزبائن',  icon: '👥', roles: ['owner', 'pharmacist', 'cashier'] },
-  { id: 'rep',  label: 'التقارير', icon: '📊', roles: ['owner'] },
-  { id: 'set',  label: 'الإعدادات', icon: '⚙️', roles: ['owner'] },
+  { id: 'dash', label: 'الرئيسية', icon: 'home', roles: ['owner', 'pharmacist', 'cashier'] },
+  { id: 'pos',  label: 'الكاشير',  icon: 'pos', roles: ['owner', 'pharmacist', 'cashier'] },
+  { id: 'inv',  label: 'المخزون',  icon: 'inventory', roles: ['owner', 'pharmacist'] },
+  { id: 'cust', label: 'الزبائن',  icon: 'customers', roles: ['owner', 'pharmacist', 'cashier'] },
+  { id: 'rep',  label: 'التقارير', icon: 'reports', roles: ['owner'] },
+  { id: 'set',  label: 'الإعدادات', icon: 'settings', roles: ['owner'] },
 ];
 let currentView = 'dash';
 
@@ -821,13 +841,13 @@ function buildNav() {
   for (const item of NAV) {
     if (!item.roles.includes(State.user.role)) continue;
     top.append(el('button', {
-      class: item.id === currentView ? 'active' : '', text: item.label,
+      class: item.id === currentView ? 'active' : '',
       dataset: { nav: item.id }, onclick: () => showView(item.id),
-    }));
+    }, iconSvg(item.icon), el('span', { text: item.label })));
     bot.append(el('button', {
       class: item.id === currentView ? 'active' : '',
       dataset: { nav: item.id }, onclick: () => showView(item.id),
-    }, el('span', { class: 'ic', text: item.icon }), el('span', { text: item.label })));
+    }, iconSvg(item.icon), el('span', { text: item.label })));
   }
 }
 
@@ -853,7 +873,6 @@ function toggleTheme() {
 }
 function applyTheme(t) {
   document.documentElement.setAttribute('data-theme', t);
-  $('theme-btn').textContent = t === 'light' ? '🌙' : '☀️';   // كانت لا تُحدَّث عند التحميل
 }
 
 /* ==================== ١٢. لوحة التحكم ==================== */
@@ -974,7 +993,12 @@ async function doSearch() {
   const q = $('search-input').value.trim().toLowerCase();
   const dd = $('search-dropdown');
   State.kbIndex = -1;
-  if (!q) { dd.classList.add('hidden'); State.searchResults = []; return; }
+  if (!q) {
+    dd.classList.add('hidden');
+    $('search-input').setAttribute('aria-expanded', 'false');
+    State.searchResults = [];
+    return;
+  }
 
   const prods = await db.products.where('pharmacy_id').equals(State.pharmacyId).toArray();
   const hits = prods.filter((p) =>
@@ -984,6 +1008,7 @@ async function doSearch() {
   if (!hits.length) {
     dd.append(el('div', { class: 'search-item' }, el('div', { class: 'nm', text: 'لا توجد نتائج' })));
     dd.classList.remove('hidden');
+    $('search-input').setAttribute('aria-expanded', 'true');
     State.searchResults = [];
     return;
   }
@@ -1007,8 +1032,11 @@ async function doSearch() {
     const blocked = out || info.state === 'expired';
     if (!blocked) State.searchResults.push(b.id);
 
-    const row = el('div', {
+    const row = el(blocked ? 'div' : 'button', {
       class: 'search-item' + (blocked ? ' disabled' : ''),
+      type: blocked ? null : 'button',
+      role: blocked ? null : 'option',
+      'aria-label': blocked ? null : `${pMap[b.product_id]?.name || 'صنف'}، دفعة ${b.batch_number || 'غير معروفة'}، متوفر ${b.quantity}`,
       dataset: blocked ? {} : { batchId: b.id },
     },
       el('div', {},
@@ -1022,6 +1050,7 @@ async function doSearch() {
     dd.append(row);
   });
   dd.classList.remove('hidden');
+  $('search-input').setAttribute('aria-expanded', 'true');
 }
 
 // تفويض حدث واحد — لا onclick مضمّن، فلا مسار لحقن الكود
@@ -1037,6 +1066,7 @@ async function selectBatch(batchId) {
   addToCart(p, b);
   $('search-input').value = '';
   $('search-dropdown').classList.add('hidden');
+  $('search-input').setAttribute('aria-expanded', 'false');
   $('search-input').focus();
 }
 
@@ -1078,6 +1108,7 @@ function renderCart() {
             el('button', { text: '−', 'aria-label': 'إنقاص', onclick: () => changeQty(i.batch_id, -1) }),
             el('input', {
               type: 'number', min: '1', value: String(i.qty), inputmode: 'numeric',
+              'aria-label': `كمية ${i.product_name}`,
               onchange: (e) => setQty(i.batch_id, parseInt(e.target.value, 10)),
             }),
             el('button', { text: '+', 'aria-label': 'زيادة', onclick: () => changeQty(i.batch_id, 1) })),
@@ -1262,6 +1293,7 @@ function initPosKeyboard() {
         addToCart(prod, bs[0]);          // FEFO تلقائياً
         input.value = '';
         $('search-dropdown').classList.add('hidden');
+        $('search-input').setAttribute('aria-expanded', 'false');
         return;
       }
       toast('لا توجد دفعة صالحة لهذا الصنف', 'error');
@@ -1282,7 +1314,10 @@ function initPosKeyboard() {
   });
 
   document.addEventListener('click', (e) => {
-    if (!e.target.closest('.search-wrapper')) $('search-dropdown').classList.add('hidden');
+    if (!e.target.closest('.search-wrapper')) {
+      $('search-dropdown').classList.add('hidden');
+      $('search-input').setAttribute('aria-expanded', 'false');
+    }
   });
 }
 

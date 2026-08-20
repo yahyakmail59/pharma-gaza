@@ -63,7 +63,7 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
-  font-family: "Tajawal", "Segoe UI", "Noto Naskh Arabic", Tahoma, sans-serif;
+  font-family: "Noto Sans Arabic", "Segoe UI", Tahoma, Arial, sans-serif;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -71,7 +71,7 @@ body {
   background: var(--bg);
   background-image: var(--body-gradient);
   color: var(--text);
-  min-height: 100vh;
+  min-height: 100dvh;
   overflow-x: hidden;
   transition: background-color 0.3s ease, color 0.3s ease;
 }
@@ -88,17 +88,32 @@ button {
   background: var(--surface);
   color: var(--text);
   font-family: inherit;
+  min-height: 44px;
+  touch-action: manipulation;
 }
 @media (hover: hover) {
   button:hover { background: var(--surface-hover); }
   .btn-primary:hover, .btn-sell:hover { transform: translateY(-1px); }
 }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
+button:active:not(:disabled) { transform: scale(.98); }
 
 :focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
+  outline: 3px solid var(--primary);
+  outline-offset: 3px;
   border-radius: 4px;
+}
+
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
 }
 
 input, select, textarea {
@@ -178,7 +193,7 @@ dialog p { color: var(--muted); font-size: 14px; margin-block-end: 16px; line-he
 
 /* ---------- شاشة الدخول ---------- */
 #login-view {
-  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -219,7 +234,7 @@ dialog p { color: var(--muted); font-size: 14px; margin-block-end: 16px; line-he
 .header {
   background: var(--blur-bg);
   backdrop-filter: blur(20px);
-  padding: 12px 16px;
+  padding: max(12px, env(safe-area-inset-top)) 16px 12px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -235,7 +250,7 @@ dialog p { color: var(--muted); font-size: 14px; margin-block-end: 16px; line-he
 }
 .nav-btns button {
   background: transparent; color: var(--muted);
-  padding: 8px 15px; border-radius: 10px; font-size: 14px; white-space: nowrap;
+  min-height: 44px; padding: 8px 15px; border-radius: 10px; font-size: 14px; white-space: nowrap;
 }
 .nav-btns button.active {
   background: var(--surface-hover); color: var(--text);
@@ -250,11 +265,15 @@ dialog p { color: var(--muted); font-size: 14px; margin-block-end: 16px; line-he
 
 .icon-btn {
   background: var(--surface); border: 1px solid var(--border);
-  width: 36px; height: 36px; display: flex; align-items: center;
+  width: 44px; height: 44px; display: flex; align-items: center;
   justify-content: center; border-radius: 10px; font-size: 15px; flex-shrink: 0;
 }
+.theme-icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.theme-icon-moon { display: none; }
+[data-theme="light"] .theme-icon-sun { display: none; }
+[data-theme="light"] .theme-icon-moon { display: block; }
 
-.content-area { flex: 1; padding: 22px 16px 32px; }
+.content-area { flex: 1; padding: 22px 16px calc(32px + env(safe-area-inset-bottom)); }
 
 /* ---------- شريط سفلي للجوال ---------- */
 .bottom-nav { display: none; }
@@ -275,6 +294,7 @@ dialog p { color: var(--muted); font-size: 14px; margin-block-end: 16px; line-he
   width: 34px; height: 34px; display: flex; align-items: center;
   justify-content: center; border-radius: 10px; font-size: 17px; background: var(--surface-hover);
 }
+.dash-card .icon svg, .empty-state .em svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .dash-card .value { font-size: 27px; font-weight: 800; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
 .dash-card .title { color: var(--muted-dark); font-size: 12.5px; }
 
@@ -308,6 +328,7 @@ dialog p { color: var(--muted); font-size: 14px; margin-block-end: 16px; line-he
   background: var(--surface-hover); border: 1px solid var(--border);
   width: 52px; display: flex; align-items: center; justify-content: center; font-size: 19px; flex-shrink: 0;
 }
+.btn-scan svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .search-dropdown {
   position: absolute; inset-block-start: 58px; inset-inline: 0;
   background: var(--bg); border: 1px solid var(--border-hover);
@@ -319,6 +340,7 @@ dialog p { color: var(--muted); font-size: 14px; margin-block-end: 16px; line-he
   cursor: pointer; display: flex; justify-content: space-between;
   align-items: center; gap: 12px;
 }
+.search-item button, button.search-item { width: 100%; color: inherit; background: transparent; border: 0; text-align: start; font-weight: inherit; }
 .search-item:last-child { border-block-end: none; }
 .search-item:hover, .search-item.kb-active { background: var(--surface-hover); }
 .search-item.disabled { opacity: 0.45; cursor: not-allowed; }
@@ -341,7 +363,7 @@ dialog p { color: var(--muted); font-size: 14px; margin-block-end: 16px; line-he
   display: flex; align-items: center; gap: 6px; background: var(--surface);
   padding: 4px 6px; border-radius: 10px; border: 1px solid var(--border);
 }
-.qty-control button { background: transparent; color: var(--text); font-size: 17px; width: 28px; height: 28px; }
+.qty-control button { background: transparent; color: var(--text); font-size: 17px; width: 44px; height: 44px; min-height: 44px; }
 .qty-control input {
   width: 52px; padding: 4px; text-align: center; font-size: 15px;
   border: none; background: transparent; font-variant-numeric: tabular-nums;
@@ -408,6 +430,23 @@ td.num { font-variant-numeric: tabular-nums; }
 
 #reader { width: 100%; border-radius: 12px; overflow: hidden; }
 #print-frame { position: fixed; inset-block-start: -9999px; width: 1px; height: 1px; border: 0; }
+
+@media (max-width: 767px) {
+  .content-area { padding-block-end: calc(96px + env(safe-area-inset-bottom)); }
+  .header { padding-inline: 12px; }
+  .nav-btns { display: none; }
+  .bottom-nav button { min-height: 52px; padding-block: 7px; touch-action: manipulation; }
+  .table-container { overflow: visible; border: 0; background: transparent; }
+  .table-container table, .table-container tbody, .table-container tr, .table-container td { display: block; width: 100%; }
+  .table-container thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .table-container tr { margin-block-end: 10px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+  .table-container td { display: flex; align-items: center; justify-content: space-between; gap: 14px; border: 0; padding: 6px 0; text-align: end; }
+  .table-container td::before { content: attr(data-label); color: var(--muted-dark); font-size: 12.5px; font-weight: 600; text-align: start; flex-shrink: 0; }
+  .table-container td:first-child { justify-content: flex-start; }
+  .table-container td:first-child::before { display: none; }
+  .table-container td:empty { display: none; }
+  .table-container td button { min-height: 44px; }
+}
 
 /* ============================================================
    الجوال — أقل من 768px
@@ -514,3 +553,14 @@ dialog .dialog-hint {
   font-size: 13px; color: var(--muted); line-height: 1.7;
   background: var(--surface); border-inline-start: 3px solid var(--warning);
 }
+
+/* رموز واجهة موحّدة بدل الرموز التعبيرية، مع مساحة لمس ثابتة في الهاتف. */
+.ui-icon { width: 20px; height: 20px; flex: 0 0 auto; }
+.button-icon { width: 18px; height: 18px; flex: 0 0 auto; vertical-align: -4px; }
+.nav-btns button, .bottom-nav button { display: inline-flex; align-items: center; gap: 7px; }
+.bottom-nav button { justify-content: center; }
+.search-item { text-align: start; }
+button.search-item { width: 100%; border: 0; font: inherit; color: inherit; cursor: pointer; }
+.search-item:focus-visible { position: relative; z-index: 1; }
+.empty-state .em { display: inline-flex; align-items: center; justify-content: center; }
+.empty-state .em .ui-icon { width: 32px; height: 32px; }

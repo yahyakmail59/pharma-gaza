@@ -37,7 +37,7 @@
              style="text-align:center; font-size:18px;">
     </div>
 
-    <div class="pin-dots" aria-label="الرقم السري">
+    <div class="pin-dots" role="status" aria-live="polite" aria-label="عدد خانات الرقم السري المدخلة">
       <span id="d1"></span><span id="d2"></span><span id="d3"></span>
       <span id="d4"></span><span id="d5"></span><span id="d6"></span>
     </div>
@@ -69,29 +69,32 @@
         <span class="status-dot dot-online" id="net-dot"></span>
         <span id="net-text">متصل</span>
       </span>
-      <button type="button" id="theme-btn" class="icon-btn" aria-label="تبديل المظهر">☀️</button>
+      <button type="button" id="theme-btn" class="icon-btn" aria-label="تبديل المظهر">
+        <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>
+        <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20.4 15.1A8.5 8.5 0 0 1 8.9 3.6 8.5 8.5 0 1 0 20.4 15.1Z"></path></svg>
+      </button>
       <button type="button" id="logout-btn" class="btn-danger">خروج</button>
     </div>
   </header>
 
-  <main class="content-area">
+  <main class="content-area" id="main-content" tabindex="-1">
 
     <!-- ---------- لوحة التحكم ---------- -->
     <section id="dash-view">
       <h2 class="section-title">لوحة التحكم</h2>
       <div class="dash-grid">
         <div class="dash-card">
-          <div class="icon">💰</div>
+            <div class="icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16v12H4zM7 7V5h10v2M8 13h8M12 10v6"/></svg></div>
           <div class="value" id="stat-sales" style="color:var(--primary)">0.00</div>
           <div class="title">مبيعات اليوم</div>
         </div>
         <div class="dash-card">
-          <div class="icon">🧾</div>
+            <div class="icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h12v18H6zM9 7h6M9 11h6M9 15h4"/></svg></div>
           <div class="value" id="stat-invoices" style="color:var(--info)">0</div>
           <div class="title">عدد الفواتير</div>
         </div>
         <div class="dash-card">
-          <div class="icon">⚠️</div>
+            <div class="icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 3 9 17H3L12 3zM12 9v5M12 17h.01"/></svg></div>
           <div class="value" id="stat-low-stock" style="color:var(--warning)">0</div>
           <div class="title">أصناف تحتاج شراء</div>
         </div>
@@ -110,9 +113,11 @@
       <div class="pos-container">
         <div class="pos-left">
           <div class="search-wrapper">
-            <input type="text" id="search-input" autocomplete="off"
+            <label class="sr-only" for="search-input">البحث عن دواء أو باركود</label>
+            <input type="search" id="search-input" autocomplete="off"
+                   aria-controls="search-dropdown" aria-expanded="false"
                    placeholder="ابحث بالاسم أو امسح الباركود ثم اضغط Enter">
-            <button type="button" class="btn-scan" id="btn-scan-pos" aria-label="مسح الباركود">📷</button>
+              <button type="button" class="btn-scan" id="btn-scan-pos" aria-label="مسح الباركود"><svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h3l1.5-2h7L17 7h3v12H4zM12 10a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg></button>
             <div id="search-dropdown" class="search-dropdown hidden" role="listbox"></div>
           </div>
           <div class="cart-area" id="cart-area"></div>
@@ -160,7 +165,7 @@
             <label for="med-barcode">الباركود</label>
             <div style="display:flex;gap:8px;">
               <input type="text" id="med-barcode" placeholder="اختياري">
-              <button type="button" class="btn-scan" id="btn-scan-inv" aria-label="مسح الباركود">📷</button>
+                <button type="button" class="btn-scan" id="btn-scan-inv" aria-label="مسح الباركود"><svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h3l1.5-2h7L17 7h3v12H4zM12 10a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg></button>
             </div>
           </div>
         </div>
@@ -187,12 +192,13 @@
           يُعرض لك ملخّص للمراجعة قبل الحفظ، ولا يُضاف شيء قبل موافقتك.
         </p>
         <div style="display:flex;gap:10px;flex-wrap:wrap;">
-          <button type="button" class="btn-ghost" id="btn-template">⬇ تنزيل النموذج</button>
-          <button type="button" class="btn-primary" id="btn-import-excel">⬆ رفع ملف الأصناف</button>
+            <button type="button" class="btn-ghost" id="btn-template"><svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12M7 10l5 5 5-5M5 20h14"/></svg> تنزيل النموذج</button>
+            <button type="button" class="btn-primary" id="btn-import-excel"><svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21V9M7 14l5-5 5 5M5 4h14"/></svg> رفع ملف الأصناف</button>
           <input type="file" id="excel-file" accept=".xlsx,.xls,.csv" class="hidden">
         </div>
       </div>
 
+      <label class="sr-only" for="inv-search">البحث في المخزون</label>
       <input type="search" id="inv-search" placeholder="ابحث في المخزون بالاسم أو الباركود أو رقم الدفعة">
 
       <div id="inv-wrap">
@@ -243,7 +249,7 @@
           <div class="title">مبيعات آجلة اليوم</div>
         </div>
         <div class="dash-card">
-          <div class="icon">📊</div>
+            <div class="icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 20V10M12 20V4M19 20v-7"/></svg></div>
           <div class="value" id="rep-profit" style="color:var(--info)">0.00</div>
           <div class="title">الربح التقديري</div>
         </div>
@@ -332,8 +338,8 @@
         </p>
         <p id="backup-status" style="color:var(--muted);font-size:13px;margin-block-end:14px;">—</p>
         <div style="display:flex;gap:10px;flex-wrap:wrap;">
-          <button type="button" class="btn-primary" id="btn-backup-export">⬇ إنشاء نسخة احتياطية</button>
-          <button type="button" class="btn-ghost" id="btn-backup-import">⬆ استعادة من ملف</button>
+          <button type="button" class="btn-primary" id="btn-backup-export"><svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12M7 10l5 5 5-5M5 20h14"/></svg> إنشاء نسخة احتياطية</button>
+          <button type="button" class="btn-ghost" id="btn-backup-import"><svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21V9M7 14l5-5 5 5M5 4h14"/></svg> استعادة من ملف</button>
           <input type="file" id="backup-file" accept="application/json,.json" class="hidden">
         </div>
       </div>
