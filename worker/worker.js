@@ -490,7 +490,7 @@ async function provisionFromAthar(env, signed) {
   if (started.replay) {
     return adapterJson({
       ...started.result,
-      credentials: { pharmacy_id: started.result.external_tenant_id, owner_pin: pin },
+      credentials: credentialPayload(started.result.external_tenant_id, pin),
       replayed: true,
     });
   }
@@ -533,7 +533,7 @@ async function provisionFromAthar(env, signed) {
     );
     await db.batch(statements);
     console.log(JSON.stringify({ event: "adapter.provision", request_id: signed.requestId, tenant_id: tenantId, status: "succeeded" }));
-    return adapterJson({ ...result, credentials: { pharmacy_id: pharmacyId, owner_pin: pin } }, 201);
+    return adapterJson({ ...result, credentials: credentialPayload(pharmacyId, pin) }, 201);
   } catch (error) {
     await markAdapterFailed(db, signed.requestId, error instanceof AdapterHttpError ? error.code : "PROVISIONING_FAILED");
     throw error;
@@ -597,6 +597,22 @@ async function changeAtharTenantStatus(env, signed, tenantIdFromPath) {
  * بالمعرّف ذاته تعيد الرقم نفسه ولا تقفل المالك خارج صيدليته.
  * الرقم القديم يبطل فورًا، وتُلغى الجلسات القائمة حتى لا يبقى جهاز مفتوحًا برقم مسروق.
  */
+/**
+ * شكل بيانات الدخول الموحّد بين المحركات. `login_id/username/secret` هو ما
+ * تقرأه لوحة أثر، فلا تحتاج أن تعرف أن هذا المنتج يسمّيه PIN وذاك كلمة مرور.
+ * المفاتيح القديمة تبقى للتوافق مع أي مستهلك لم يُحدَّث بعد.
+ */
+function credentialPayload(pharmacyId, pin) {
+  return {
+    login_id: pharmacyId,
+    username: "owner",
+    secret: pin,
+    secret_label: "الرقم السري للمالك",
+    pharmacy_id: pharmacyId,
+    owner_pin: pin,
+  };
+}
+
 async function resetOwnerPin(env, signed, tenantIdFromPath) {
   const db = env.DB;
   const tenantId = adapterRequired(tenantIdFromPath, "INVALID_TENANT_ID", 80);
@@ -605,7 +621,7 @@ async function resetOwnerPin(env, signed, tenantIdFromPath) {
   if (started.replay) {
     return adapterJson({
       ...started.result,
-      credentials: { pharmacy_id: started.result.external_tenant_id, owner_pin: pin },
+      credentials: credentialPayload(started.result.external_tenant_id, pin),
       replayed: true,
     });
   }
@@ -641,7 +657,7 @@ async function resetOwnerPin(env, signed, tenantIdFromPath) {
       ).bind(JSON.stringify(result), now, signed.requestId),
     ]);
     console.log(JSON.stringify({ event: "adapter.reset_owner_pin", request_id: signed.requestId, tenant_id: tenantId, status: "succeeded" }));
-    return adapterJson({ ...result, credentials: { pharmacy_id: pharmacy.pharmacy_id, owner_pin: pin } });
+    return adapterJson({ ...result, credentials: credentialPayload(pharmacy.pharmacy_id, pin) });
   } catch (error) {
     await markAdapterFailed(db, signed.requestId, error instanceof AdapterHttpError ? error.code : "PIN_RESET_FAILED");
     throw error;
@@ -730,9 +746,13 @@ async function handleAtharAdapter(request, env) {
     if (healthMatch && request.method === "GET") {
       return await atharTenantHealth(env, signed.requestId, decodeURIComponent(healthMatch[1]));
     }
-    const pinMatch = path.match(/^\/internal\/v1\/tenants\/([^/]+)\/reset-owner-pin$/);
-    if (pinMatch && request.method === "POST") {
-      return await resetOwnerPin(env, signed, decodeURIComponent(pinMatch[1]));
+    // المسار الموحّد لكل المحركات. `reset-owner-pin` اسم قديم يبقى مقبولاً
+    // حتى لا ينكسر طلب قيد التنفيذ، والجديد هو المذكور في العقد.
+    const credentialMatch = path.match(
+      /^\/internal\/v1\/tenants\/([^/]+)\/(?:reset-owner-credential|reset-owner-pin)$/
+    );
+    if (credentialMatch && request.method === "POST") {
+      return await resetOwnerPin(env, signed, decodeURIComponent(credentialMatch[1]));
     }
     const purgeMatch = path.match(/^\/internal\/v1\/tenants\/([^/]+)$/);
     if (purgeMatch && request.method === "DELETE") {
