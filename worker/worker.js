@@ -602,6 +602,50 @@ async function changeAtharTenantStatus(env, signed, tenantIdFromPath) {
  * تقرأه لوحة أثر، فلا تحتاج أن تعرف أن هذا المنتج يسمّيه PIN وذاك كلمة مرور.
  * المفاتيح القديمة تبقى للتوافق مع أي مستهلك لم يُحدَّث بعد.
  */
+/**
+ * تحديث هوية الصيدلية من لوحة أثر.
+ *
+ * الاسم يملكه السجل التجاري: هو الاسم الذي بيع عليه الاشتراك. يُحدَّث في
+ * موضعين — صف الصيدلية وجدول `settings` الذي تقرؤه الواجهة وتزامنه الأجهزة.
+ * تحديث أحدهما وحده يترك الشاشات على الاسم القديم.
+ */
+async function updatePharmacyProfile(env, signed, tenantIdFromPath) {
+  const db = env.DB;
+  const tenantId = adapterRequired(tenantIdFromPath, "INVALID_TENANT_ID", 80);
+  const started = await beginAdapterRequest(db, signed.requestId, "update_profile", tenantId, signed.requestHash);
+  if (started.replay) return adapterJson({ ...started.result, replayed: true });
+
+  try {
+    const pharmacy = await db.prepare(
+      "SELECT pharmacy_id, name FROM pharmacies WHERE control_tenant_id = ?"
+    ).bind(tenantId).first();
+    if (!pharmacy) throw new AdapterHttpError(404, "TENANT_NOT_FOUND", "Product tenant was not found.");
+
+    const nextName = signed.body.display_name === undefined
+      ? String(pharmacy.name)
+      : adapterRequired(signed.body.display_name, "INVALID_DISPLAY_NAME", 160);
+    const now = Date.now();
+    const result = {
+      ok: true, request_id: signed.requestId, tenant_id: tenantId,
+      external_tenant_id: pharmacy.pharmacy_id, display_name: nextName,
+    };
+    await db.batch([
+      db.prepare("UPDATE pharmacies SET name = ?, updated_at = ? WHERE control_tenant_id = ?")
+        .bind(nextName, now, tenantId),
+      db.prepare("UPDATE settings SET name = ?, updated_at = ? WHERE pharmacy_id = ?")
+        .bind(nextName, now, pharmacy.pharmacy_id),
+      db.prepare(
+        `UPDATE adapter_requests SET status = 'succeeded', response_json = ?, error_code = '', completed_at = ?
+         WHERE request_id = ?`
+      ).bind(JSON.stringify(result), now, signed.requestId),
+    ]);
+    return adapterJson(result);
+  } catch (error) {
+    await markAdapterFailed(db, signed.requestId, error instanceof AdapterHttpError ? error.code : "PROFILE_UPDATE_FAILED");
+    throw error;
+  }
+}
+
 function credentialPayload(pharmacyId, pin) {
   return {
     login_id: pharmacyId,
@@ -753,6 +797,10 @@ async function handleAtharAdapter(request, env) {
     );
     if (credentialMatch && request.method === "POST") {
       return await resetOwnerPin(env, signed, decodeURIComponent(credentialMatch[1]));
+    }
+    const profileMatch = path.match(/^\/internal\/v1\/tenants\/([^/]+)\/profile$/);
+    if (profileMatch && request.method === "POST") {
+      return await updatePharmacyProfile(env, signed, decodeURIComponent(profileMatch[1]));
     }
     const purgeMatch = path.match(/^\/internal\/v1\/tenants\/([^/]+)$/);
     if (purgeMatch && request.method === "DELETE") {

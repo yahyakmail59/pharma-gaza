@@ -294,6 +294,22 @@ assert.equal(repeatPurgeResponse.status, 200);
 const goneHealthResponse = await signedRequest('GET', `/internal/v1/tenants/${tenantId}/health`, randomUUID());
 assert.equal(goneHealthResponse.status, 404);
 
+// تعديل اسم الصيدلية من أثر يصل إلى إعداداتها، لا إلى صف الصيدلية وحده.
+const profileRequestId = randomUUID();
+const renamedResponse = await signedRequest(
+  'POST', `/internal/v1/tenants/${productionTenantId}/profile`, profileRequestId,
+  { request_id: profileRequestId, tenant_id: productionTenantId, display_name: 'صيدلية باسم جديد' },
+);
+assert.equal(renamedResponse.status, 200);
+assert.equal((await responseJson(renamedResponse)).display_name, 'صيدلية باسم جديد');
+
+if (miniflare) {
+  const database = await miniflare.getD1Database('DB');
+  const settings = await database.prepare('SELECT name FROM settings WHERE pharmacy_id = ?')
+    .bind(production.external_tenant_id).first();
+  assert.equal(settings.name, 'صيدلية باسم جديد', 'the rename must reach the settings the app reads');
+}
+
 console.log('adapter-integration-ok');
 } finally {
   if (miniflare) await miniflare.dispose();
