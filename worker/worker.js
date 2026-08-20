@@ -609,6 +609,43 @@ async function changeAtharTenantStatus(env, signed, tenantIdFromPath) {
  * موضعين — صف الصيدلية وجدول `settings` الذي تقرؤه الواجهة وتزامنه الأجهزة.
  * تحديث أحدهما وحده يترك الشاشات على الاسم القديم.
  */
+/**
+ * تغيير الباقة من لوحة أثر. الصيدلية بباقة واحدة اليوم، لكن المسار موجود
+ * ليبقى العقد موحّدًا بين المحركات: اللوحة تنادي المسار نفسه لكل منتج،
+ * ولا تحمل استثناءً لكل محرك.
+ */
+async function changePharmacyPlan(env, signed, tenantIdFromPath) {
+  const db = env.DB;
+  const tenantId = adapterRequired(tenantIdFromPath, "INVALID_TENANT_ID", 80);
+  const planCode = adapterRequired(signed.body.plan_code, "INVALID_PLAN_CODE", 80);
+  const started = await beginAdapterRequest(db, signed.requestId, "change_plan", tenantId, signed.requestHash);
+  if (started.replay) return adapterJson({ ...started.result, replayed: true });
+
+  try {
+    const pharmacy = await db.prepare(
+      "SELECT pharmacy_id FROM pharmacies WHERE control_tenant_id = ?"
+    ).bind(tenantId).first();
+    if (!pharmacy) throw new AdapterHttpError(404, "TENANT_NOT_FOUND", "Product tenant was not found.");
+    const now = Date.now();
+    const result = {
+      ok: true, request_id: signed.requestId, tenant_id: tenantId,
+      external_tenant_id: pharmacy.pharmacy_id, plan_code: planCode,
+    };
+    await db.batch([
+      db.prepare("UPDATE pharmacies SET plan_code = ?, updated_at = ? WHERE control_tenant_id = ?")
+        .bind(planCode, now, tenantId),
+      db.prepare(
+        `UPDATE adapter_requests SET status = 'succeeded', response_json = ?, error_code = '', completed_at = ?
+         WHERE request_id = ?`
+      ).bind(JSON.stringify(result), now, signed.requestId),
+    ]);
+    return adapterJson(result);
+  } catch (error) {
+    await markAdapterFailed(db, signed.requestId, error instanceof AdapterHttpError ? error.code : "PLAN_CHANGE_FAILED");
+    throw error;
+  }
+}
+
 async function updatePharmacyProfile(env, signed, tenantIdFromPath) {
   const db = env.DB;
   const tenantId = adapterRequired(tenantIdFromPath, "INVALID_TENANT_ID", 80);
@@ -797,6 +834,10 @@ async function handleAtharAdapter(request, env) {
     );
     if (credentialMatch && request.method === "POST") {
       return await resetOwnerPin(env, signed, decodeURIComponent(credentialMatch[1]));
+    }
+    const planMatch = path.match(/^\/internal\/v1\/tenants\/([^/]+)\/plan$/);
+    if (planMatch && request.method === "POST") {
+      return await changePharmacyPlan(env, signed, decodeURIComponent(planMatch[1]));
     }
     const profileMatch = path.match(/^\/internal\/v1\/tenants\/([^/]+)\/profile$/);
     if (profileMatch && request.method === "POST") {
