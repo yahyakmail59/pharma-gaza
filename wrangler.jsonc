@@ -10,6 +10,15 @@
     "directory": "./public",
     "run_worker_first": ["/api/*", "/internal/*"]
   },
+  // مضيف واحد لكل الصيدليات، لا نطاقًا لكل صيدلية.
+  //
+  // الصيدلية تطبيق مغلق كالمدرسة: لا صفحة عامة، والمستأجر يُحدَّد بـ`?pharmacy=`
+  // بعد الدخول لا بالمضيف. والنمط الشامل `*.athar.date` مملوك لمحرك المطاعم،
+  // والـslug فريد داخل المنتج لا عبره — فقاعدة أخصّ تغلبه وتتجنّب التصادم.
+  "routes": [
+    { "pattern": "pharmacy.athar.date/*", "zone_name": "athar.date" }
+  ],
+
   "d1_databases": [
     {
       "binding": "DB",
@@ -18,8 +27,11 @@
     }
   ],
   "vars": {
-    "PUBLIC_APP_URL": "https://pharma-sync-api.yahyakmail59.workers.dev/",
-    "ALLOWED_ORIGINS": "https://pharma-sync-api.yahyakmail59.workers.dev"
+    "PUBLIC_APP_URL": "https://pharmacy.athar.date/",
+    // العنوانان معًا: الواجهة تُخدم من نفس الأصل فلا تحتاج CORS، لكن رابط
+    // workers.dev يبقى عاملًا لمن حفظه — وحذفه من القائمة يحجب الـAPI عنه
+    // بينما الصفحة نفسها ما زالت تُفتح، فيظهر العطل كأنه في الدخول.
+    "ALLOWED_ORIGINS": "https://pharmacy.athar.date,https://pharma-sync-api.yahyakmail59.workers.dev"
   },
   "observability": {
     "enabled": true,
