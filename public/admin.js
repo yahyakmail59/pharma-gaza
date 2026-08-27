@@ -8,7 +8,9 @@
 
 'use strict';
 
-const WORKER_URL = 'https://pharma-sync-api.yahyakmail59.workers.dev'; // ← غيّره لرابطك
+// فارغ = نفس أصل الصفحة. عنوان محفور هنا يموت مع أول تغيير نطاق، ويظهر
+// العطل للمستخدم رسالةَ «فشل الاتصال بالسيرفر» لا خطأَ إعداد.
+const WORKER_URL = '';
 
 const $ = (id) => document.getElementById(id);
 const clear = (n) => { while (n.firstChild) n.removeChild(n.firstChild); };

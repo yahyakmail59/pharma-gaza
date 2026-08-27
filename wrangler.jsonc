@@ -3,7 +3,12 @@
   "name": "pharma-sync-api",
   "main": "worker/worker.js",
   "compatibility_date": "2026-08-19",
-  "workers_dev": true,
+  // مغلق: العناوين المعتمدة على athar.date وحدها.
+  //
+  // عنوان workers.dev يبقى بابًا ثانيًا للخدمة نفسها: يُفهرس، ويُنسخ في
+  // رسالة لعميل، ثم يُعطَّل يومًا فيظهر العطل عند من حفظه لا عندنا. وقد
+  // وقع هذا فعلًا — واجهة الصيدلية كانت تناديه فسقط الدخول كله.
+  "workers_dev": false,
   // واجهة الصيدلية تُخدم من نفس الأصل. هذا يلغي حاجة CORS بين الواجهة
   // والـAPI، ويعطي كل صيدلية رابطًا عامًا يعمل دون استضافة خارجية.
   "assets": {
@@ -31,7 +36,7 @@
     // العنوانان معًا: الواجهة تُخدم من نفس الأصل فلا تحتاج CORS، لكن رابط
     // workers.dev يبقى عاملًا لمن حفظه — وحذفه من القائمة يحجب الـAPI عنه
     // بينما الصفحة نفسها ما زالت تُفتح، فيظهر العطل كأنه في الدخول.
-    "ALLOWED_ORIGINS": "https://pharmacy.athar.date,https://pharma-sync-api.yahyakmail59.workers.dev"
+    "ALLOWED_ORIGINS": "https://pharmacy.athar.date"
   },
   "observability": {
     "enabled": true,

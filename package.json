@@ -2,5 +2,8 @@
   "name": "pharma-gaza",
   "version": "2.1.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "test": "node worker/tests/adapter.integration.mjs && node tests/frontend-origin.contract.mjs"
+  }
 }
