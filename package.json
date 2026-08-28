@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node worker/tests/adapter.integration.mjs && node tests/frontend-origin.contract.mjs"
+    "test": "node worker/tests/adapter.integration.mjs && node tests/frontend-origin.contract.mjs && node tests/branding.contract.mjs"
   }
 }

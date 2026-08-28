@@ -1110,6 +1110,54 @@ async function applyAction(db, session, act) {
  *                        المسارات
  * ============================================================ */
 
+/**
+ * يكتب اسم الصيدلية في الصفحة قبل إرسالها.
+ *
+ * الرابط يُرسَل على واتساب، والزاحف الذي يبني المعاينة لا يشغّل جافاسكربت —
+ * فالتعديل بعد التحميل لا يصل إليه. وكان كل رابط يُعرض باسم «PharmaGaza»
+ * مهما كان اسم الصيدلية.
+ *
+ * وبصمة الأصول تُنزَع: تحسبها الطبقة على الملف الأصلي **قبل** الوسم، فهي
+ * نفسها لكل الصيدليات — والمتصفّح يعيد التحقّق فيأخذ 304 ويُعيد نسخته
+ * القديمة، فصيدلية تُغيّر اسمها لا ترى الجديد أبدًا.
+ */
+function brandPharmacyPage(response, pharmacy) {
+  const title = `${pharmacy.name} — نظام إدارة الصيدلية`;
+  const headers = new Headers(response.headers);
+  headers.delete("ETag");
+  headers.delete("Last-Modified");
+  headers.set("Cache-Control", "private, no-store");
+  const fresh = new Response(response.body, { status: response.status, headers });
+
+  return new HTMLRewriter()
+    .on("title", { element(node) { node.setInnerContent(title); } })
+    .on('meta[name="description"]', { element(node) { node.setAttribute("content", title); } })
+    .on('meta[property="og:title"]', { element(node) { node.setAttribute("content", pharmacy.name); } })
+    .on("html", { element(node) { node.setAttribute("data-pharmacy-name", pharmacy.name); } })
+    // العنوان المرئي في شاشة الدخول أيضًا: كان محفورًا «PharmaGaza»، فيفتح
+    // الصيدلاني رابطه فيقرأ اسم منتجٍ لا اسم صيدليته. ويُكتب هنا لا
+    // بجافاسكربت، كي يصل قبل أي تحميل ويظهر للزاحف كما يظهر للزائر.
+    .on("#login-brand", { element(node) { node.setInnerContent(pharmacy.name); } })
+    .transform(fresh);
+}
+
+/**
+ * كعكة الصيدلية.
+ *
+ * ليست سرًّا ولا تمنح صلاحية — الرمز نفسه ظاهر في الرابط. مهمّتها أن تتذكّر
+ * الصفحة أيّ صيدلية تخدم حين يفتح صاحبها رابطًا بلا `?pharmacy=`.
+ */
+function pharmacyCookie(code, url) {
+  const secure = url.protocol === "https:" ? "; Secure" : "";
+  return `pharmacy_code=${encodeURIComponent(code)}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`;
+}
+
+function readPharmacyCookie(request) {
+  const jar = request.headers.get("Cookie") || "";
+  const match = jar.match(/(?:^|;\s*)pharmacy_code=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -1391,6 +1439,32 @@ export default {
         }
 
         return json({ error: "NOT_FOUND" }, 404, H);
+      }
+
+      // ما ليس `/api` ولا `/internal` فهو أصل: الصفحة أو ملفاتها.
+      //
+      // كل الطلبات تمرّ بالـWorker الآن (`run_worker_first: true`)، فيطلب
+      // الأصول بنفسه ويكتب هوية الصيدلية في الصفحة قبل إرسالها.
+      if (!url.pathname.startsWith("/api/")) {
+        if (!env.ASSETS) return json({ error: "ASSETS_NOT_BOUND" }, 500, H);
+        const asset = await env.ASSETS.fetch(request);
+
+        const code = (url.searchParams.get("pharmacy") || readPharmacyCookie(request) || "").trim();
+        const isHtml = (asset.headers.get("Content-Type") || "").includes("text/html");
+        if (code && isHtml && asset.ok) {
+          const pharmacy = await db
+            .prepare("SELECT name FROM pharmacies WHERE pharmacy_id = ?")
+            .bind(code.slice(0, 80))
+            .first();
+          // صيدلية مجهولة تُترك بلا تعديل: كتابة اسم فارغ أسوأ من الافتراضي.
+          if (pharmacy?.name) {
+            const branded = brandPharmacyPage(asset, pharmacy);
+            const headers = new Headers(branded.headers);
+            headers.append("Set-Cookie", pharmacyCookie(code.slice(0, 80), url));
+            return new Response(branded.body, { status: branded.status, headers });
+          }
+        }
+        return asset;
       }
 
       return json({ error: "NOT_FOUND" }, 404, H);
