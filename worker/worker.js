@@ -1133,6 +1133,7 @@ function brandPharmacyPage(response, pharmacy) {
     .on("title", { element(node) { node.setInnerContent(title); } })
     .on('meta[name="description"]', { element(node) { node.setAttribute("content", title); } })
     .on('meta[property="og:title"]', { element(node) { node.setAttribute("content", pharmacy.name); } })
+    .on('meta[property="og:description"]', { element(node) { node.setAttribute("content", title); } })
     .on("html", { element(node) { node.setAttribute("data-pharmacy-name", pharmacy.name); } })
     // العنوان المرئي في شاشة الدخول أيضًا: كان محفورًا «PharmaGaza»، فيفتح
     // الصيدلاني رابطه فيقرأ اسم منتجٍ لا اسم صيدليته. ويُكتب هنا لا

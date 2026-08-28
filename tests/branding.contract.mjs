@@ -76,6 +76,17 @@ check(
   'كي تعرف الصفحة صيدليتها حين يُفتح رابط بلا ?pharmacy=',
 );
 
+// قاعدة مُحرِّر على وسم غير موجود لا تفشل ولا تعمل: تُوهم بتغطية. وقد كانت
+// `og:title` كذلك — والمعاينة تنجو بـ`title` وحده صدفةً لا تصميمًا.
+const page = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+for (const prop of ['og:title', 'og:description']) {
+  const inPage = page.includes(`property="${prop}"`);
+  const inWorker = worker.includes(`meta[property="${prop}"]`);
+  check(`${prop}: القاعدة والوسم معًا`, inPage && inWorker,
+    inPage ? (inWorker ? '' : 'وسم بلا قاعدة — يصل الزبونَ اسم المنتج')
+           : 'قاعدة بلا وسم — تغطية موهومة');
+}
+
 const failed = checks.filter((row) => !row.ok);
 if (failed.length) {
   console.error(`\n${failed.length} فحصًا فشل.`);
